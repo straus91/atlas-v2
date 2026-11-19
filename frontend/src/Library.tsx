@@ -97,6 +97,8 @@ export default function Library({ index, failure, params }: LibraryProps) {
     return all
   }, [cards, query])
 
+  const mine = cards.filter((card) => card.draft).length
+  const published = cards.length - mine
   const active = FILTERS.flatMap((spec) => (query.chosen[spec.key] ?? []).map((value) => ({ spec, value })))
   const types = query.chosen.type ?? []
   const mode = types.length === 1 ? (types[0] === 'Dataset' ? 'dataset' : 'model') : 'mixed'
@@ -133,7 +135,7 @@ export default function Library({ index, failure, params }: LibraryProps) {
             </FilterMenu>
           ))}
           <FilterMenu label="More" open={openMenu === 'more'} count={moreCount} onOpen={(open) => setOpenMenu(open ? 'more' : null)}>
-            {more.map((spec) => (
+            {more.filter((spec) => (options.get(spec.key)?.length ?? 0) > 1 || query.chosen[spec.key]?.length).map((spec) => (
               <div className="filter-group" key={spec.key}>
                 <p className="filter-heading">{spec.label}</p>
                 <Options spec={spec} options={options.get(spec.key) ?? []} chosen={query.chosen} onToggle={toggle} />
@@ -156,7 +158,8 @@ export default function Library({ index, failure, params }: LibraryProps) {
 
       <div className="lib-head">
         <p className="muted" role="status">
-          {shown.length === cards.length ? `${cards.length} published cards` : `${shown.length} of ${cards.length} published cards`}
+          {shown.length === cards.length ? `${published} published cards` : `${shown.length} of ${cards.length} cards`}
+          {mine > 0 && shown.length === cards.length && ` and ${mine} draft${mine === 1 ? '' : 's'} of yours`}
         </p>
         <div className="row">
           {mode === 'model' && view === 'list' && valued.length > 0 && (
@@ -293,6 +296,7 @@ function ListTable({ cards, mode, metric }: { cards: LibraryCard[]; mode: 'mixed
             <tr key={card.id}>
               <td className="name-cell">
                 <a href={`#/library/${card.id}`}>{card.title}</a>
+                {card.draft && <span className="draft-badge" title="You sent this card from the creator. Only you can see it, in this browser.">Draft</span>}
                 {card.summary && <span className="muted line">{card.summary}</span>}
               </td>
               {mode === 'mixed' && <td><TypeBadge type={card.type} /></td>}
@@ -390,7 +394,10 @@ function Tile({ card }: { card: LibraryCard }) {
     <div className="tile">
       <a className="tile-main" href={`#/library/${card.id}`}>
       <span className="tile-head">
-        <TypeBadge type={card.type} />
+        <span className="row badges">
+          <TypeBadge type={card.type} />
+          {card.draft && <span className="draft-badge" title="You sent this card from the creator. Only you can see it, in this browser.">Draft</span>}
+        </span>
         <strong>{card.title}</strong>
       </span>
       {card.summary && <span className="tile-summary">{card.summary}</span>}

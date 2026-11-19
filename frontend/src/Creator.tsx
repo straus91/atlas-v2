@@ -4,7 +4,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { listenToCreator, openInCreator } from './host.ts'
 import type { CardToOpen, ReceivedCard } from './host.ts'
-import { saveCard } from './library.ts'
 
 interface CreatorProps {
   url: string
@@ -13,23 +12,29 @@ interface CreatorProps {
   /** A card from the library to open for editing, once the creator is ready. */
   toOpen: CardToOpen | null
   onOpened: () => void
-  received: ReceivedCard | null
-  onReceived: (received: ReceivedCard | null) => void
+  /** The card that just arrived, once it has been added to Browse as a draft. */
+  arrived: { id: string; name: string; description: string; cardType: string } | null
+  onCard: (received: ReceivedCard) => Promise<void>
+  onDismiss: () => void
 }
 
-export default function Creator({ url, origin, hidden, toOpen, onOpened, received, onReceived }: CreatorProps) {
+export default function Creator({ url, origin, hidden, toOpen, onOpened, arrived, onCard, onDismiss }: CreatorProps) {
   const frame = useRef<HTMLIFrameElement>(null)
   const [ready, setReady] = useState(false)
+  const [trouble, setTrouble] = useState<string | null>(null)
 
   useEffect(
     () => listenToCreator(() => frame.current?.contentWindow ?? null, origin, {
       onReady: () => setReady(true),
       onCard: (card) => {
-        onReceived(card)
-        window.scrollTo({ top: 0, behavior: 'smooth' })
+        setTrouble(null)
+        onCard(card).then(
+          () => window.scrollTo({ top: 0, behavior: 'smooth' }),
+          () => setTrouble('The card arrived, but it could not be added to Browse. Check the connection and send it again.'),
+        )
       },
     }),
-    [origin, onReceived],
+    [origin, onCard],
   )
 
   useEffect(() => {
@@ -38,22 +43,25 @@ export default function Creator({ url, origin, hidden, toOpen, onOpened, receive
     onOpened()
   }, [ready, toOpen, origin, onOpened])
 
-  const name = received ? String((received.card[received.cardType === 'dataset' ? 'Dataset' : 'Model'] as Record<string, unknown> | undefined)?.Name ?? 'Unnamed card') : ''
-
   return (
     <div hidden={hidden}>
-      {received && (
+      {trouble && <p className="banner bad">{trouble}</p>}
+      {arrived && (
         <section className="panel received" aria-live="polite">
-          <h2>Card received: {name}</h2>
-          <p className="muted">The card creator sent this {received.cardType} card and its description. No file was downloaded or uploaded.</p>
-          <p className="description">{received.description || 'No description was given.'}</p>
+          <h2>Card received: {arrived.name}</h2>
+          <p className="muted">
+            The card creator sent this {arrived.cardType} card and its description. No file was downloaded or uploaded. It is now in Browse as
+            a draft.
+          </p>
+          <p className="description">{arrived.description || 'No description was given.'}</p>
           <div className="row">
-            <a className="button primary" href="#/received">See it as a library page</a>
-            <button type="button" onClick={() => saveCard(received.card, name, received.cardType)}>Download card (JSON)</button>
-            <button type="button" onClick={() => onReceived(null)}>Dismiss</button>
+            <a className="button primary" href={`#/library/${arrived.id}`}>Open its page</a>
+            <a className="button" href="#/library?status=Draft+%28only+in+this+browser%29">See it in Browse</a>
+            <button type="button" onClick={onDismiss}>Dismiss</button>
           </div>
           <p className="muted draft-note">
-            This proposal site has no accounts, so the card is kept only in this browser tab. In ATLAS this step would save it as your draft.
+            This proposal site has no accounts, so the draft is kept in this browser and only you can see it. In ATLAS this step would save it
+            as a draft in your account.
           </p>
         </section>
       )}

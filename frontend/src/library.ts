@@ -28,6 +28,8 @@ export interface LibraryCard {
   results: ReadResult[]
   results_read: boolean
   search: string
+  /** A card this visitor sent from the creator: kept in their browser, not part of the published library. */
+  draft?: boolean
 }
 
 export interface ReadResult {
@@ -91,7 +93,17 @@ export async function getLibrary(): Promise<LibraryIndex> {
   return (await response.json()) as LibraryIndex
 }
 
+// Cards that live in this browser only (the visitor's drafts), looked up before asking the server.
+const local = new Map<string, LibraryRecord>()
+
+export function setLocalRecords(records: LibraryRecord[]) {
+  local.clear()
+  for (const record of records) if (record.facts) local.set(record.facts.id, record)
+}
+
 export async function getLibraryCard(id: string): Promise<LibraryRecord> {
+  const mine = local.get(id)
+  if (mine) return mine
   const response = await fetch(`/api/library/${encodeURIComponent(id)}`)
   if (response.status === 404) throw new Error('That card is not in the library.')
   if (!response.ok) throw new Error(`The card could not be loaded (${response.status}).`)
@@ -115,7 +127,7 @@ export async function downloadCard(card: LibraryCard): Promise<void> {
 }
 
 // ------------------------------------------------------------------ filters
-export type FilterKey = 'type' | 'modality' | 'subspecialty' | 'task' | 'population' | 'year' | 'metric' | 'license' | 'size'
+export type FilterKey = 'type' | 'modality' | 'subspecialty' | 'task' | 'population' | 'year' | 'metric' | 'license' | 'size' | 'status'
 
 export interface FilterSpec {
   key: FilterKey
@@ -129,6 +141,8 @@ export interface FilterSpec {
 }
 
 export const NOT_STATED = 'Not stated'
+export const PUBLISHED = 'Published'
+export const DRAFT = 'Draft (only in this browser)'
 
 export const FILTERS: FilterSpec[] = [
   { key: 'type', label: 'Type', main: true, values: (card) => [card.type === 'dataset' ? 'Dataset' : 'Model'], order: ['Dataset', 'Model'] },
@@ -143,6 +157,8 @@ export const FILTERS: FilterSpec[] = [
     key: 'size', label: 'Size given as', main: false,
     values: (card) => SIZE_KINDS.filter(({ kind }) => card.sizes[kind]).map(({ many }) => many[0].toUpperCase() + many.slice(1)),
   },
+  // Only offered when the visitor has drafts (cards they sent from the creator).
+  { key: 'status', label: 'Status', main: false, values: (card) => [card.draft ? DRAFT : PUBLISHED], order: [DRAFT, PUBLISHED] },
 ]
 
 export type Chosen = Partial<Record<FilterKey, string[]>>

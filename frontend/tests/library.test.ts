@@ -52,6 +52,14 @@ describe('library filters', () => {
     expect(parseRoute('#/creator').page).toBe('creator')
   })
 
+  it('keeps a visitor’s drafts apart from the published cards', () => {
+    const withDraft = [card({ title: 'My new set', draft: true, year: 2026 }), ...CARDS]
+    const statuses = optionsFor(withDraft, { text: '', chosen: {} }, spec('status'))
+    expect(statuses).toEqual([{ value: 'Draft (only in this browser)', count: 1 }, { value: 'Published', count: 4 }])
+    expect(filterCards(withDraft, { text: '', chosen: { year: ['2026'] } }).map((found) => found.title)).toEqual(['My new set'])
+    expect(filterCards(withDraft, { text: '', chosen: { status: ['Published'] } })).toHaveLength(4)
+  })
+
   it('sorts, and words sizes', () => {
     expect(sortCards(CARDS, 'newest').map((found) => found.title)).toEqual(['Liver segmenter', 'Liver CT set', 'Brain MRI set', 'Fracture finder'])
     expect(sortCards(CARDS, 'largest')[0].title).toBe('Liver CT set')

@@ -35,7 +35,7 @@ type CardType = 'dataset' | 'model'
 type OnEdit = ((card: CardToOpen) => void) | null
 
 /** A card from the library, fetched by its id. */
-export function CardPage({ id, onEdit }: { id: string; onEdit: OnEdit }) {
+export function CardPage({ id, onEdit, onRemoveDraft }: { id: string; onEdit: OnEdit; onRemoveDraft: (id: string) => void }) {
   const [record, setRecord] = useState<LibraryRecord | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
 
@@ -61,18 +61,19 @@ export function CardPage({ id, onEdit }: { id: string; onEdit: OnEdit }) {
       </>
     )
   if (!record) return <p className="muted">Loading the card…</p>
-  return <CardBody record={record} onEdit={onEdit} backTo={lastLibraryView()} backLabel="Library" />
+  return <CardBody record={record} onEdit={onEdit} onRemoveDraft={onRemoveDraft} backTo={lastLibraryView()} backLabel="Library" />
 }
 
 interface CardBodyProps {
   record: LibraryRecord
   onEdit: OnEdit
+  onRemoveDraft: (id: string) => void
   backTo: string
   backLabel: string
 }
 
 /** One card laid out for reading. Used for library cards and for a card just received from the creator. */
-export function CardBody({ record, onEdit, backTo, backLabel }: CardBodyProps) {
+export function CardBody({ record, onEdit, onRemoveDraft, backTo, backLabel }: CardBodyProps) {
   const cardType: CardType = 'Dataset' in record.card ? 'dataset' : 'model'
   const body = (record.card[cardType === 'dataset' ? 'Dataset' : 'Model'] ?? {}) as Dict
   const facts = record.facts
@@ -87,6 +88,12 @@ export function CardBody({ record, onEdit, backTo, backLabel }: CardBodyProps) {
   return (
     <article className="card-view">
       <a className="back" href={backTo}>← {backLabel}</a>
+      {facts?.draft && (
+        <p className="banner warn">
+          This is a draft you sent from the card creator. It is kept in this browser and only you can see it; it is not part of the published
+          library. <button type="button" className="link" onClick={() => onRemoveDraft(facts.id)}>Remove this draft</button>
+        </p>
+      )}
 
       <section className="panel card-top">
         <div className="card-title">
@@ -99,7 +106,7 @@ export function CardBody({ record, onEdit, backTo, backLabel }: CardBodyProps) {
           {link && <a className="button primary" href={link} target="_blank" rel="noreferrer">Open the {cardType === 'dataset' ? 'dataset' : 'publication'} ↗</a>}
           <button type="button" onClick={download}>Download card (JSON)</button>
           {onEdit && <button type="button" onClick={() => onEdit({ cardType, title, card: record.card })}>Open in the card creator</button>}
-          {facts && facts.id !== 'draft' && <a className="button" href={facts.atlas_url} target="_blank" rel="noreferrer">View on ATLAS ↗</a>}
+          {facts && !facts.draft && <a className="button" href={facts.atlas_url} target="_blank" rel="noreferrer">View on ATLAS ↗</a>}
         </div>
       </section>
 

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
-import { CardBody, CardPage } from './CardView.tsx'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { CardPage } from './CardView.tsx'
 import Creator from './Creator.tsx'
+import { asDraft, readDrafts, writeDrafts } from './drafts.ts'
 import type { CardToOpen, ReceivedCard } from './host.ts'
 import Library from './Library.tsx'
-import { describeCard, getHealth, getLibrary } from './library.ts'
-import type { Health, LibraryIndex, LibraryRecord } from './library.ts'
+import { describeCard, getHealth, getLibrary, setLocalRecords } from './library.ts'
+import type { Health, LibraryCard, LibraryIndex, LibraryRecord } from './library.ts'
 import Overview from './Overview.tsx'
 import { go, useRoute } from './route.ts'
 
@@ -15,8 +16,13 @@ export default function App() {
   const [failure, setFailure] = useState<string | null>(null)
   const [creatorOpened, setCreatorOpened] = useState(false) // the frame is loaded on first visit, then kept
   const [toOpen, setToOpen] = useState<CardToOpen | null>(null)
-  const [received, setReceived] = useState<ReceivedCard | null>(null)
-  const [preview, setPreview] = useState<LibraryRecord | null>(null)
+  // Cards sent from the creator; this browser only. Registered at once, so a draft's own page can be opened directly.
+  const [drafts, setDrafts] = useState<LibraryRecord[]>(() => {
+    const saved = readDrafts()
+    setLocalRecords(saved)
+    return saved
+  })
+  const [arrived, setArrived] = useState<{ id: string; name: string; description: string; cardType: string } | null>(null)
 
   useEffect(() => {
     getHealth().then(setHealth, () => setFailure('Cannot reach the server.'))
@@ -42,22 +48,38 @@ export default function App() {
     if (route.page === 'creator') setCreatorOpened(true)
   }, [route.page])
 
-  // A card that just arrived from the creator, described the way the library describes its cards.
+  // Drafts are looked up in this browser instead of on the server, and remembered between visits.
   useEffect(() => {
-    setPreview(null)
-    if (!received) return
-    let current = true
-    describeCard(received.card, received.description).then((record) => current && setPreview(record), () => undefined)
-    return () => {
-      current = false
-    }
-  }, [received])
+    setLocalRecords(drafts)
+    writeDrafts(drafts)
+  }, [drafts])
+
+  /** A card arrived from the creator: have the server describe it, then keep it as a draft here. */
+  const receive = useCallback(async (received: ReceivedCard) => {
+    const draft = asDraft(await describeCard(received.card, received.description))
+    setDrafts((current) => [draft, ...current])
+    setArrived({ id: draft.facts!.id, name: draft.facts!.title, description: received.description, cardType: received.cardType })
+  }, [])
+
+  const removeDraft = useCallback((id: string) => {
+    setDrafts((current) => current.filter((draft) => draft.facts?.id !== id))
+    setArrived((current) => (current?.id === id ? null : current))
+    go('#/library')
+  }, [])
 
   const edit = useCallback((card: CardToOpen) => {
     setToOpen(card)
     go('#/creator')
   }, [])
   const opened = useCallback(() => setToOpen(null), [])
+  const dismiss = useCallback(() => setArrived(null), [])
+
+  // Browse shows the published cards plus this visitor's drafts; the Overview counts published cards only.
+  const browsing = useMemo<LibraryIndex | null>(() => {
+    if (!library) return null
+    const mine = drafts.map((draft) => draft.facts).filter((facts): facts is LibraryCard => facts !== null)
+    return mine.length ? { ...library, cards: [...mine, ...library.cards] } : library
+  }, [library, drafts])
 
   const creator = health?.creator_url ? { url: health.creator_url, origin: health.creator_origin } : null
   const current = (page: string) => (route.page === page || (page === 'library' && route.page === 'card') ? 'current' : '')
@@ -82,23 +104,12 @@ export default function App() {
         {creator && <a href="#/creator" className={current('creator')}>Creator</a>}
       </nav>
 
-      {route.page === 'library' && <Library index={library} failure={failure} params={route.params} />}
-      {route.page === 'card' && <CardPage id={route.id} onEdit={creator ? edit : null} />}
+      {route.page === 'library' && <Library index={browsing} failure={failure} params={route.params} />}
+      {route.page === 'card' && <CardPage id={route.id} onEdit={creator ? edit : null} onRemoveDraft={removeDraft} />}
       {route.page === 'overview' && <Overview index={library} failure={failure} />}
-      {route.page === 'received' &&
-        (preview ? (
-          <>
-            <p className="banner warn">
-              This card was just received from the card creator and exists only in this browser tab. This is how it would look in the library.
-            </p>
-            <CardBody record={preview} onEdit={creator ? edit : null} backTo="#/creator" backLabel="Creator" />
-          </>
-        ) : (
-          <p className="panel muted">No card has been received from the creator in this tab. <a href="#/creator">Open the Creator</a>.</p>
-        ))}
       {creator && creatorOpened && (
         <Creator url={creator.url} origin={creator.origin} hidden={route.page !== 'creator'} toOpen={toOpen} onOpened={opened}
-          received={received} onReceived={setReceived} />
+          arrived={arrived} onCard={receive} onDismiss={dismiss} />
       )}
     </div>
   )

@@ -29,6 +29,8 @@ label.inline select { width: auto; }
   }
 }
 .type-badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.draft-badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; margin-left: 8px; background: var(--warn-bg); color: var(--warn-text); }
+.badges { gap: 0; }
 .type-badge.dataset { background: var(--dataset-soft); color: var(--dataset-ink); }
 .type-badge.model { background: var(--model-soft); color: var(--model-ink); }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
