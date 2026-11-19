@@ -1,0 +1,95 @@
+/* Base look of the site: colours for light and dark, page frame, buttons, panels, tables. */
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --sunken: #f0f2f5;
+  --text: #1c2430;
+  --muted: #5b6776;
+  --line: #d5dbe3;
+  --accent: #0b5cad;
+  --accent-soft: #e6f0fb;
+  --accent-text: #ffffff;
+  --ok-bg: #e6f4ea;
+  --ok-text: #17603a;
+  --warn-bg: #fff4d6;
+  --warn-text: #6f4b00;
+  --bad-bg: #fde8e6;
+  --bad-text: #9b1c13;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12161c;
+    --panel: #1b212a;
+    --sunken: #151a21;
+    --text: #e6eaf0;
+    --muted: #9aa6b5;
+    --line: #333d4b;
+    --accent: #5aa7f0;
+    --accent-soft: #1c2f45;
+    --accent-text: #0b1520;
+    --ok-bg: #153524;
+    --ok-text: #8fdcae;
+    --warn-bg: #3b2f0d;
+    --warn-text: #f2cf73;
+    --bad-bg: #43201d;
+    --bad-text: #f5aaa3;
+  }
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); }
+
+.page { max-width: 1280px; margin: 0 auto; padding: 24px 16px 64px; }
+.page.full { max-width: none; padding-bottom: 16px; }
+
+header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+h1 { font-size: 1.5rem; margin: 0; }
+.version { font-size: 0.75rem; font-weight: 700; vertical-align: middle; padding: 2px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-text); }
+h2 { font-size: 1.05rem; margin: 0 0 12px; }
+p { margin: 0; }
+
+.muted { color: var(--muted); font-size: 0.9rem; }
+.fine { margin-top: 16px; font-size: 0.82rem; }
+.block { display: block; }
+.help { color: var(--muted); font-size: 0.82rem; margin-top: 3px; }
+code { font-family: ui-monospace, Consolas, monospace; font-size: 0.9em; }
+
+.banner { padding: 10px 14px; border-radius: 8px; margin: 12px 0; }
+.banner.ok { background: var(--ok-bg); color: var(--ok-text); }
+.banner.warn { background: var(--warn-bg); color: var(--warn-text); }
+.banner.bad { background: var(--bad-bg); color: var(--bad-text); }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-top: 16px; }
+
+button, select, input, textarea { font: inherit; color: var(--text); }
+button { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+button.link { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; font-weight: 600; text-align: left; }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+input, select, textarea { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
+
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.segmented button { border: 0; border-radius: 0; }
+.segmented button.selected { background: var(--accent); color: var(--accent-text); }
+.segmented.small button { padding: 5px 12px; }
+
+.row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th { text-align: left; font-weight: 600; font-size: 0.8rem; color: var(--muted); padding: 6px 8px; white-space: nowrap; background: var(--sunken); }
+td { padding: 3px 4px; vertical-align: top; border-top: 1px solid var(--line); }
+
+/* ------------------------------------------------------------------ creator page */
+.creator-frame { display: block; width: 100%; height: calc(100vh - 150px); min-height: 560px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.received { margin: 0 0 12px; }
+.received h2 { margin-bottom: 4px; }
+.received .description { margin: 8px 0; padding: 10px 12px; background: var(--sunken); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.draft-note { margin: 8px 0 0; }

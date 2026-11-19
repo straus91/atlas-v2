@@ -1,0 +1,21 @@
+# ATLAS V2 (proposal) — run it with:   docker compose up
+# then open http://localhost:8001
+#
+# Settings come from a `.env` file next to this file (copy .env.example to .env). Every
+# setting has a working default, so the file is optional on your own computer.
+
+services:
+  atlas:
+    build: .
+    image: atlas-v2
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8001}:8000"
+    environment:
+      CREATOR_URL: ${CREATOR_URL:-https://card-creator.pedsrad.org}
+      LIBRARY_SYNC_HOURS: ${LIBRARY_SYNC_HOURS:-24}
+    volumes:
+      - atlas-data:/data   # the copy of the cards read from ATLAS; survives restarts
+
+volumes:
+  atlas-data:

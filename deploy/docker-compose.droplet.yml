@@ -1,0 +1,20 @@
+# Extra settings for running behind the droplet's front-door Caddy. Used together with
+# docker-compose.yml; on the droplet the .env file names both, so the plain commands
+# (`docker compose up -d --build`) do the right thing there.
+#
+# - No port is opened on the server itself: the site is reachable only through the front door.
+# - The site joins the small network the front-door Caddy already shares with the card creator
+#   ("card-creator-front"), under the name "atlas-v2". It has no access to casedeck's services.
+
+services:
+  atlas:
+    ports: !reset []
+    networks:
+      front:
+        aliases:
+          - atlas-v2
+
+networks:
+  front:
+    name: card-creator-front
+    external: true
