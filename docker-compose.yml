@@ -14,8 +14,17 @@ services:
     environment:
       CREATOR_URL: ${CREATOR_URL:-https://card-creator.pedsrad.org}
       LIBRARY_SYNC_HOURS: ${LIBRARY_SYNC_HOURS:-24}
+      # Author review (all optional; see .env.example)
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      SITE_URL: ${SITE_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
     volumes:
-      - atlas-data:/data   # the copy of the cards read from ATLAS; survives restarts
+      - atlas-data:/data   # the copy of the cards read from ATLAS, and the author reviews; survives restarts
 
 volumes:
   atlas-data:

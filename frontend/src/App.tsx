@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Admin from './Admin.tsx'
 import { CardPage } from './CardView.tsx'
 import Creator from './Creator.tsx'
 import { asDraft, readDrafts, writeDrafts } from './drafts.ts'
@@ -8,6 +9,7 @@ import { describeCard, getHealth, getLibrary, setLocalRecords } from './library.
 import type { Health, LibraryCard, LibraryIndex, LibraryRecord } from './library.ts'
 import Overview from './Overview.tsx'
 import { go, useRoute } from './route.ts'
+import Validate from './Validate.tsx'
 
 export default function App() {
   const route = useRoute()
@@ -72,6 +74,8 @@ export default function App() {
     go('#/creator')
   }, [])
   const opened = useCallback(() => setToOpen(null), [])
+  /** The administrator gave or removed a mark: show it in Browse without a reload. */
+  const reload = useCallback(() => void getLibrary().then(setLibrary, () => undefined), [])
   const dismiss = useCallback(() => setArrived(null), [])
 
   // Browse shows the published cards plus this visitor's drafts; the Overview counts published cards only.
@@ -98,15 +102,20 @@ export default function App() {
         </div>
       </header>
 
-      <nav className="site-nav" aria-label="Pages">
-        <a href="#/library" className={current('library')}>Browse</a>
-        <a href="#/overview" className={current('overview')}>Overview</a>
-        {creator && <a href="#/creator" className={current('creator')}>Creator</a>}
-      </nav>
+      {route.page !== 'validate' && (
+        <nav className="site-nav" aria-label="Pages">
+          <a href="#/library" className={current('library')}>Browse</a>
+          <a href="#/overview" className={current('overview')}>Overview</a>
+          {creator && <a href="#/creator" className={current('creator')}>Creator</a>}
+          <a href="#/admin" className={`${current('admin')} aside`}>Admin</a>
+        </nav>
+      )}
 
       {route.page === 'library' && <Library index={browsing} failure={failure} params={route.params} />}
       {route.page === 'card' && <CardPage id={route.id} onEdit={creator ? edit : null} onRemoveDraft={removeDraft} />}
       {route.page === 'overview' && <Overview index={library} failure={failure} />}
+      {route.page === 'admin' && <Admin onMarksChanged={reload} />}
+      {route.page === 'validate' && <Validate token={route.id} />}
       {creator && creatorOpened && (
         <Creator url={creator.url} origin={creator.origin} hidden={route.page !== 'creator'} toOpen={toOpen} onOpened={opened}
           arrived={arrived} onCard={receive} onDismiss={dismiss} />

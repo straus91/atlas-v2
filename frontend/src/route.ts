@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react'
 
 export interface Route {
-  page: 'library' | 'card' | 'overview' | 'creator'
-  id: string // the card, on the 'card' page
+  page: 'library' | 'card' | 'overview' | 'creator' | 'admin' | 'validate'
+  id: string // the card, on the 'card' page; the personal link's key, on the 'validate' page
   params: URLSearchParams
 }
 
@@ -13,7 +13,8 @@ export function parseRoute(hash: string): Route {
   const params = new URLSearchParams(search)
   const parts = path.split('/').filter(Boolean)
   if (parts[0] === 'library') return parts[1] ? { page: 'card', id: decodeURIComponent(parts[1]), params } : { page: 'library', id: '', params }
-  if (parts[0] === 'overview' || parts[0] === 'creator') return { page: parts[0], id: '', params }
+  if (parts[0] === 'overview' || parts[0] === 'creator' || parts[0] === 'admin') return { page: parts[0], id: '', params }
+  if (parts[0] === 'validate' && parts[1]) return { page: 'validate', id: decodeURIComponent(parts[1]), params }
   return { page: 'library', id: '', params } // the library is the front page
 }
 

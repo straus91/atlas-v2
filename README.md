@@ -13,6 +13,12 @@ cards ATLAS publishes and shows them differently.
   contains, with partitions and results as tables.
 - **Overview**: what the library covers and where it is thin (modality by subspecialty, cards
   per year, completeness, tasks, metrics). Every number is a link to those cards.
+- **Author review**: a card can carry the mark "Author-reviewed". In the **Admin** page an
+  administrator switches on validation emails, ticks cards, and their contact persons get a
+  personal link to a page that shows the card and asks whether it is correct. When the contact
+  says yes and the administrator gives the final OK, the mark appears in Browse (with a filter)
+  and on the card page. If the card changes afterwards, the mark is hidden until it is reviewed
+  again. See [Author review](#author-review).
 - **Creator**: the [ROADMAP card creator](https://github.com/straus91/roadmap-json), a separate
   project, shown in a frame as on the real ATLAS. Its "Send to ATLAS" button hands the finished
   card to this site, and "Open in the card creator" on a card page sends a card the other way.
@@ -32,7 +38,7 @@ Settings are optional and described in [.env.example](.env.example).
 
 | Part | What it is |
 |---|---|
-| `backend/` | A small FastAPI app. `library.py` reads the cards from ATLAS's public pages (at start-up, then daily) and works out the facts to filter by. No database, no accounts, no AI calls. |
+| `backend/` | A small FastAPI app. `library.py` reads the cards from ATLAS's public pages (at start-up, then daily) and works out the facts to filter by. `review.py` keeps the author reviews in one small file and sends the emails. No database, no AI calls; the only account is the administrator's password. |
 | `frontend/` | React + Vite pages, built to static files and served by the same container. |
 | `backend/app/data/metric_results.json` | Result values read once from the model cards' free text by a language model, each checked to appear in that text. See `backend/app/results.py`. |
 | `deploy/` | Installer for the droplet that already runs the card creator. |
@@ -40,6 +46,26 @@ Settings are optional and described in [.env.example](.env.example).
 Where the cards come from: ATLAS has no export or public API, so `library.py` reads each public
 card page, which carries the complete card. A redesign of those pages would break this; a real
 ATLAS V2 would read its own database instead.
+
+## Author review
+
+Off by default. To use it, set `ADMIN_PASSWORD` in `.env` and restart; the **Admin** page then asks
+for that password.
+
+| Step | Who | What happens |
+|---|---|---|
+| 1 | Administrator | Switches on "Validation emails", ticks cards and confirms the list of recipients. The address comes from the card (its contact, else its authors) and can be changed. |
+| 2 | Site | Makes a personal link for each card (it works for 60 days) and emails it. Without a mail server nothing is sent: the link is shown, to send by hand. |
+| 3 | Contact person | Opens the link (no account), reads the card, and answers "correct" or "needs changes" with a comment. |
+| 4 | Administrator | Gives the final OK to a card its contact confirmed. Only then does everyone see "Author-reviewed". |
+
+The administrator can also mark a card by hand (with the reason, which is kept), remove a mark, or
+withdraw a request. The text of the email can be changed in the Admin page. Reviews are kept in
+`reviews.json` in the data volume, next to the copy of the cards.
+
+To send emails, give the SMTP settings of any mail provider in `.env` (`SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`) and set `SITE_URL` to the site's public address. On the
+real ATLAS the same steps would use its own accounts and mail service.
 
 ## The card creator is a separate project
 

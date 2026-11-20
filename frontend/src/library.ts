@@ -30,6 +30,8 @@ export interface LibraryCard {
   search: string
   /** A card this visitor sent from the creator: kept in their browser, not part of the published library. */
   draft?: boolean
+  /** The day (YYYY-MM-DD) the card was marked as author-reviewed: its contact person confirmed it and an administrator gave the final OK. */
+  author_reviewed?: string | null
 }
 
 export interface ReadResult {
@@ -90,7 +92,9 @@ export async function describeCard(card: Record<string, unknown>, description: s
 export async function getLibrary(): Promise<LibraryIndex> {
   const response = await fetch('/api/library')
   if (!response.ok) throw new Error(`The library could not be loaded (${response.status}).`)
-  return (await response.json()) as LibraryIndex
+  const index = (await response.json()) as LibraryIndex & { author_reviewed?: Record<string, string> }
+  const marks = index.author_reviewed ?? {}
+  return { ...index, cards: index.cards.map((card) => ({ ...card, author_reviewed: marks[card.id] ?? null })) }
 }
 
 // Cards that live in this browser only (the visitor's drafts), looked up before asking the server.
@@ -127,7 +131,7 @@ export async function downloadCard(card: LibraryCard): Promise<void> {
 }
 
 // ------------------------------------------------------------------ filters
-export type FilterKey = 'type' | 'modality' | 'subspecialty' | 'task' | 'population' | 'year' | 'metric' | 'license' | 'size' | 'status'
+export type FilterKey = 'type' | 'modality' | 'subspecialty' | 'task' | 'population' | 'year' | 'metric' | 'license' | 'size' | 'review' | 'status'
 
 export interface FilterSpec {
   key: FilterKey
@@ -143,6 +147,8 @@ export interface FilterSpec {
 export const NOT_STATED = 'Not stated'
 export const PUBLISHED = 'Published'
 export const DRAFT = 'Draft (only in this browser)'
+export const REVIEWED = 'Author-reviewed'
+export const NOT_REVIEWED = 'Not author-reviewed'
 
 export const FILTERS: FilterSpec[] = [
   { key: 'type', label: 'Type', main: true, values: (card) => [card.type === 'dataset' ? 'Dataset' : 'Model'], order: ['Dataset', 'Model'] },
@@ -157,6 +163,8 @@ export const FILTERS: FilterSpec[] = [
     key: 'size', label: 'Size given as', main: false,
     values: (card) => SIZE_KINDS.filter(({ kind }) => card.sizes[kind]).map(({ many }) => many[0].toUpperCase() + many.slice(1)),
   },
+  // Only offered once at least one card carries the mark.
+  { key: 'review', label: 'Author review', main: false, values: (card) => [card.author_reviewed ? REVIEWED : NOT_REVIEWED], order: [REVIEWED, NOT_REVIEWED] },
   // Only offered when the visitor has drafts (cards they sent from the creator).
   { key: 'status', label: 'Status', main: false, values: (card) => [card.draft ? DRAFT : PUBLISHED], order: [DRAFT, PUBLISHED] },
 ]
@@ -227,6 +235,13 @@ export function sortCards(cards: LibraryCard[], key: SortKey): LibraryCard[] {
     const [first, second] = [a.year ?? missing, b.year ?? missing]
     return (key === 'newest' ? second - first : first - second) || byTitle(a, b)
   })
+}
+
+/** "Nov 20, 2026" from a day or a full timestamp as the server gives it. */
+export function day(value: string | null | undefined): string {
+  if (!value) return ''
+  const date = new Date(value.length === 10 ? `${value}T12:00:00` : value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString([], { dateStyle: 'medium' })
 }
 
 export function count(value: number, one: string, many: string): string {

@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  FILTERS, NOT_STATED, SORTS, downloadCard, filterCards, metricsWithValues, optionsFor, paramsToQuery, queryToParams, resultsFor, shortMetric, sizeParts, sortCards,
+  FILTERS, NOT_STATED, SORTS, day, downloadCard, filterCards, metricsWithValues, optionsFor, paramsToQuery, queryToParams, resultsFor, shortMetric, sizeParts, sortCards,
 } from './library.ts'
 import type { Chosen, FilterKey, FilterSpec, LibraryCard, LibraryIndex, Option, Query, SortKey } from './library.ts'
 import { go } from './route.ts'
@@ -29,6 +29,16 @@ function readView(): View {
 
 export function TypeBadge({ type }: { type: LibraryCard['type'] }) {
   return <span className={`type-badge ${type}`}>{type === 'dataset' ? 'Dataset' : 'Model'}</span>
+}
+
+/** The mark of a card whose contact person confirmed it. Shows nothing for other cards. */
+export function ReviewedBadge({ card }: { card: Pick<LibraryCard, 'author_reviewed'> }) {
+  if (!card.author_reviewed) return null
+  return (
+    <span className="reviewed-badge" title={`The contact person of this card confirmed that it is correct (${day(card.author_reviewed)}).`}>
+      <span aria-hidden="true">✓</span> Author-reviewed
+    </span>
+  )
 }
 
 interface LibraryProps {
@@ -297,6 +307,7 @@ function ListTable({ cards, mode, metric }: { cards: LibraryCard[]; mode: 'mixed
               <td className="name-cell">
                 <a href={`#/library/${card.id}`}>{card.title}</a>
                 {card.draft && <span className="draft-badge" title="You sent this card from the creator. Only you can see it, in this browser.">Draft</span>}
+                <ReviewedBadge card={card} />
                 {card.summary && <span className="muted line">{card.summary}</span>}
               </td>
               {mode === 'mixed' && <td><TypeBadge type={card.type} /></td>}
@@ -397,6 +408,7 @@ function Tile({ card }: { card: LibraryCard }) {
         <span className="row badges">
           <TypeBadge type={card.type} />
           {card.draft && <span className="draft-badge" title="You sent this card from the creator. Only you can see it, in this browser.">Draft</span>}
+          <ReviewedBadge card={card} />
         </span>
         <strong>{card.title}</strong>
       </span>
