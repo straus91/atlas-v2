@@ -39,8 +39,6 @@ export interface Review {
   history?: { at: string; what: string }[]
   /** "quick": the one-click yes; "sections": the contact went through the card section by section. */
   how?: 'quick' | 'sections' | ''
-  /** Sections the contact marked as not right without correcting them. */
-  flagged?: string[]
   /** What the contact changed in the card, when they sent a corrected one. */
   differences?: Difference[]
   /** The contact has started on the card but has not answered yet. */
@@ -109,14 +107,12 @@ export interface Validation {
   answered_at: string | null
   until: string | null
   how: string
-  flagged: string[]
   /** The contact's own version of the card so far, kept on the server. */
   draft: Draft | null
 }
 
 export interface Draft {
   card: Record<string, unknown>
-  flagged: string[]
   saved_at: string | null
   differences: Difference[]
 }
@@ -127,7 +123,6 @@ export interface Answer {
   comment: string
   how?: 'quick' | 'sections'
   card?: Record<string, unknown>
-  flagged?: string[]
 }
 
 export class SignedOut extends Error {}
@@ -175,8 +170,8 @@ export async function ask(cards: { id: string; email: string; name: string }[]):
 
 export const getValidation = (token: string) => call<Validation>('GET', `/api/validate/${encodeURIComponent(token)}`)
 export const sendAnswer = (token: string, answer: Answer) => call<Validation>('POST', `/api/validate/${encodeURIComponent(token)}`, answer)
-export const saveDraft = (token: string, card: Record<string, unknown>, flagged: string[]) =>
-  call<Draft>('PUT', `/api/validate/${encodeURIComponent(token)}/draft`, { card, flagged })
+export const saveDraft = (token: string, card: Record<string, unknown>) =>
+  call<Draft>('PUT', `/api/validate/${encodeURIComponent(token)}/draft`, { card })
 
 export interface NewCardCounts {
   added: number

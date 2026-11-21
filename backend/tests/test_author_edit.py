@@ -47,29 +47,28 @@ def test_the_contact_corrects_the_card_and_the_final_ok_publishes_their_version(
 
     # their work is kept while they go, and they see what they changed so far
     card = corrected()
-    assert anyone.put(f"/api/validate/{token}/draft", json={"card": MODEL, "flagged": []}).status_code == 400   # not this kind of card
-    draft = anyone.put(f"/api/validate/{token}/draft", json={"card": card, "flagged": ["Imaging"]}).json()
+    assert anyone.put(f"/api/validate/{token}/draft", json={"card": MODEL}).status_code == 400   # not this kind of card
+    draft = anyone.put(f"/api/validate/{token}/draft", json={"card": card}).json()
     assert [row["where"] for row in draft["differences"]] == ["Descriptors › License › Text", "Partitions › 3 › Total › Patient count"]
     page = anyone.get(f"/api/validate/{token}").json()
-    assert page["status"] == "requested" and page["draft"]["card"] == card and page["draft"]["flagged"] == ["Imaging"]
+    assert page["status"] == "requested" and page["draft"]["card"] == card
     assert page["record"]["card"] == DATASET                                       # the published card is untouched
     row = next(row for row in client.get("/api/admin/reviews").json()["cards"] if row["id"] == card_id)
     assert row["review"]["working"] and "draft" not in row["review"]
 
-    # a section marked as not right needs a word of explanation; then the answer arrives as a corrected card
-    answer = {"correct": True, "name": "Jane Doe", "card": card, "flagged": ["Imaging"]}
-    assert anyone.post(f"/api/validate/{token}", json=answer).status_code == 400
-    assert anyone.post(f"/api/validate/{token}", json={**answer, "comment": "The scanner list is incomplete."}).json()["status"] == "edited"
+    # the answer arrives as a corrected card; a comment is welcome but not needed
+    answer = {"correct": True, "name": "Jane Doe", "card": card, "comment": "The scanner list is incomplete too."}
+    assert anyone.post(f"/api/validate/{token}", json=answer).json()["status"] == "edited"
 
     # the administrator is told, sees each change, and nothing is public yet
     notice = sent[-1]
     assert notice["to"] == "admin@example.org" and "Liver MRI set" in notice["subject"]
     assert "sent a corrected card (2 changes)" in notice["body"] and "CC BY 4.0 -> CC BY-NC 4.0" in notice["body"]
-    assert "Imaging" in notice["body"] and notice["body"].rstrip().endswith("https://atlas.example.org/#/admin")
+    assert "The scanner list is incomplete too." in notice["body"] and notice["body"].rstrip().endswith("https://atlas.example.org/#/admin")
     data = client.get("/api/admin/reviews").json()
     assert [message["kind"] for message in data["outbox"]] == ["notice", "request"] and data["outbox"][0]["sent"]
     row = next(row for row in data["cards"] if row["id"] == card_id)
-    assert row["review"]["status"] == "edited" and row["review"]["changes"] == 2 and row["review"]["flagged"] == ["Imaging"]
+    assert row["review"]["status"] == "edited" and row["review"]["changes"] == 2 and "flagged" not in row["review"]
     assert row["review"]["differences"][0] == {"where": "Descriptors › License › Text", "before": "CC BY 4.0", "after": "CC BY-NC 4.0"}
     assert "revision" not in row["review"]
     assert client.get(f"/api/library/{card_id}").json()["card"] == DATASET

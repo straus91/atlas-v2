@@ -11,14 +11,15 @@
 //   host -> creator   { source: 'atlas', type: 'open-card', version: 1, cardType, title, card }
 //
 // Author check (the page behind a contact person's link): the card is opened with a `check`
-// part, and the creator then shows a tick on every section instead of its own buttons.
+// part, and the creator then shows, instead of its own buttons, whether each section is right
+// as it is or was edited by the author.
 //
-//   host -> creator   { ...open-card, check: { original, flagged } }
+//   host -> creator   { ...open-card, check: { original } }
 //   creator -> host   { source: 'roadmap-card-creator', type: 'check-progress', version: 1,
-//                       cardType, card, changed, flagged, problems }      (a moment after every change)
+//                       cardType, card, changed, problems }               (a moment after every change)
 //   host -> creator   { source: 'atlas', type: 'check-finish', id }       (the final button was pressed)
 //   creator -> host   { source: 'roadmap-card-creator', type: 'check-result', version: 1, id,
-//                       ok, reason?, cardType, card, changed, flagged }   (ok: the card fits the schema)
+//                       ok, reason?, cardType, card, changed }            (ok: the card fits the schema)
 //
 // The real ATLAS would implement this same half (see the card creator's docs/send-to-atlas.md).
 
@@ -33,15 +34,14 @@ export interface CardToOpen {
   cardType: 'dataset' | 'model'
   title: string
   card: Record<string, unknown>
-  /** Open the card for an author check: `original` is the published card, `flagged` the sections marked as not right before. */
-  check?: { original: Record<string, unknown>; flagged: string[] }
+  /** Open the card for an author check: `original` is the published card, to tell which sections the author edited. */
+  check?: { original: Record<string, unknown> }
 }
 
 /** How far the author is, as the creator reports it. Sections are named as the creator shows them. */
 export interface CheckProgress {
   card: Record<string, unknown>
-  changed: string[]
-  flagged: string[]
+  changed: string[] // the sections the author edited
   problems: number // what does not fit the schema yet
 }
 
@@ -66,11 +66,11 @@ const isCard = (card: unknown): card is Record<string, unknown> => card !== null
 export function listenToCreator(frame: () => Window | null, creatorOrigin: string, handlers: Handlers): () => void {
   const listen = (event: MessageEvent) => {
     if (event.origin !== creatorOrigin || event.source !== frame()) return
-    const data = event.data as { source?: string; type?: string; id?: string; ok?: unknown; reason?: unknown; changed?: unknown; flagged?: unknown; problems?: unknown } & Partial<ReceivedCard>
+    const data = event.data as { source?: string; type?: string; id?: string; ok?: unknown; reason?: unknown; changed?: unknown; problems?: unknown } & Partial<ReceivedCard>
     if (!data || data.source !== 'roadmap-card-creator') return
     if (data.type === 'ready') handlers.onReady()
     if ((data.type === 'check-progress' || data.type === 'check-result') && isCard(data.card)) {
-      const progress = { card: data.card, changed: names(data.changed), flagged: names(data.flagged), problems: Number(data.problems) || 0 }
+      const progress = { card: data.card, changed: names(data.changed), problems: Number(data.problems) || 0 }
       if (data.type === 'check-progress') handlers.onProgress?.(progress)
       else handlers.onResult?.({ ...progress, id: String(data.id ?? ''), ok: data.ok === true, reason: typeof data.reason === 'string' ? data.reason : '' })
     }

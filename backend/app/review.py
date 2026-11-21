@@ -239,17 +239,11 @@ def admin_notice(*, title: str, review: dict[str, Any], changed: list[dict[str, 
         if len(changed) > 40:
             lines.append(f"- and {len(changed) - 40} more")
         lines.append("")
-    if review.get("flagged"):
-        lines += ["Sections marked as not right: " + ", ".join(review["flagged"]) + ".", ""]
     if review.get("comment"):
         lines += ["Their comment:", review["comment"], ""]
     lines.append("Nothing is published until you give the final OK:" if status in ("edited", "confirmed") else "Read it here:")
     lines.append(f"{site.rstrip('/')}/#/admin")
     return f'An author checked "{title}"', "\n".join(lines)
-
-
-def _names(values: list[Any]) -> list[str]:
-    return list(dict.fromkeys(str(value)[:80] for value in values if isinstance(value, str) and value.strip()))[:40]
 
 
 def _check_size(card: dict[str, Any]) -> None:
@@ -402,7 +396,7 @@ class Reviews:
             self._save()
             return json.loads(json.dumps(review))
 
-    def save_draft(self, token: str, card: dict[str, Any], flagged: list[str]) -> dict[str, Any]:
+    def save_draft(self, token: str, card: dict[str, Any]) -> dict[str, Any]:
         """Keep the contact's version of the card so far. Nothing is answered yet."""
         found = self.by_token(token)
         if found is None:
@@ -414,39 +408,39 @@ class Reviews:
                 raise ReviewError("This card has already been marked as author-reviewed.")
             if "draft" not in review:
                 self._note(review, "the contact started working on the card")
-            review["draft"] = {"card": card, "flagged": _names(flagged), "saved_at": now().isoformat(timespec="seconds")}
+            review["draft"] = {"card": card, "saved_at": now().isoformat(timespec="seconds")}
             self._save()
             return json.loads(json.dumps(review))
 
     def answer(self, token: str, *, correct: bool, name: str, comment: str, card_fingerprint: str, how: str = "",
-               card: dict[str, Any] | None = None, changes: int = 0, flagged: list[str] | None = None) -> dict[str, Any]:
+               card: dict[str, Any] | None = None, changes: int = 0) -> dict[str, Any]:
         """The contact's answer, given on the page behind the personal link.
 
         `how`: "quick" (the one-click yes) or "sections" (went through the card section by section).
         `card` with `changes` > 0: the contact's corrected card, which differs from ATLAS's in that many facts.
-        `flagged`: sections the contact marked as not right without correcting them."""
+        `correct` false: the card needs changes the contact did not make themselves (only asked on a
+        site without a card creator); they must say which."""
         found = self.by_token(token)
         if found is None:
             raise ReviewError("This link is no longer valid.")
         card_id, _ = found
         comment = comment.strip()[:4000]
-        flagged = _names(flagged or [])
         edited = card is not None and changes > 0
         if edited:
             _check_size(card)
-        if (not correct or flagged) and not comment:
+        if not correct and not edited and not comment:
             raise ReviewError("Please say what is not right, so the card can be corrected.")
-        status = "edited" if edited else "confirmed" if correct and not flagged else "changes"
+        status = "edited" if edited else "confirmed" if correct else "changes"
         with self._lock:
             review = self._data["reviews"][card_id]
             if review.get("status") == "approved":
                 raise ReviewError("This card has already been marked as author-reviewed.")
             review.update(status=status, answered_at=now().isoformat(timespec="seconds"), answered_by=name.strip()[:200],
                           comment=comment, fingerprint=card_fingerprint, how="quick" if how == "quick" else "sections",
-                          flagged=flagged, changes=changes if edited else 0)
+                          changes=changes if edited else 0)
             if edited:
                 review["revision"] = card
-                review["draft"] = {"card": card, "flagged": flagged, "saved_at": review["answered_at"]}
+                review["draft"] = {"card": card, "saved_at": review["answered_at"]}
             else:
                 review.pop("revision", None)
             said = {"confirmed": "the contact said the card is correct", "changes": "the contact asked for changes",

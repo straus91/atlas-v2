@@ -137,12 +137,10 @@ class Answer(BaseModel):
     comment: str = Field("", max_length=4000)
     how: str = Field("", max_length=20)                 # "quick": the one-click yes
     card: dict[str, Any] | None = None                  # the contact's corrected card, from the card creator
-    flagged: list[str] = Field(default_factory=list, max_length=40)   # sections marked as not right
 
 
 class Draft(BaseModel):
     card: dict[str, Any]
-    flagged: list[str] = Field(default_factory=list, max_length=40)
 
 
 def _same_kind(card: dict[str, Any], published: dict[str, Any]) -> None:
@@ -168,8 +166,8 @@ def _contact_view(state: dict[str, Any], record: dict[str, Any]) -> dict[str, An
         record = {**record, "card": revision}
     return {"record": record, "status": state["status"], "name": state.get("answered_by") or state.get("name", ""),
             "comment": state.get("comment", ""), "answered_at": state.get("answered_at"), "until": state.get("expires_at"),
-            "how": state.get("how", ""), "flagged": state.get("flagged", []),
-            "draft": {"card": draft["card"], "flagged": draft.get("flagged", []), "saved_at": draft.get("saved_at"),
+            "how": state.get("how", ""),
+            "draft": {"card": draft["card"], "saved_at": draft.get("saved_at"),
                       "differences": review.differences(record["card"], draft["card"])} if draft else None}
 
 
@@ -186,7 +184,7 @@ def validation_draft(token: str, draft: Draft) -> dict[str, Any]:
     _, _, record = _for_contact(token)
     _same_kind(draft.card, record["card"])
     try:
-        state = reviews.save_draft(token, draft.card, draft.flagged)
+        state = reviews.save_draft(token, draft.card)
     except review.ReviewError as error:
         raise HTTPException(400, str(error)) from None
     return _contact_view(state, record)["draft"]
@@ -202,7 +200,7 @@ def validation_answer(token: str, answer: Answer, request: Request) -> dict[str,
     try:
         state = reviews.answer(token, correct=answer.correct, name=answer.name, comment=answer.comment, how=answer.how,
                                card_fingerprint=review.fingerprint(record["card"]),
-                               card=answer.card if changed else None, changes=len(changed), flagged=answer.flagged)
+                               card=answer.card if changed else None, changes=len(changed))
     except review.ReviewError as error:
         raise HTTPException(400, str(error)) from None
     log.info("review: the contact of %s answered: %s", card_id, state["status"])

@@ -479,7 +479,6 @@ function Standing({ row, stage }: { row: AdminRow; stage: Stage }): ReactNode {
           <strong className="good">The contact sent a corrected card ({review.differences?.length ?? 0} change{review.differences?.length === 1 ? '' : 's'})</strong>
           <span className="muted line">{who}. Nothing is published until your final OK.</span>
           <Differences rows={review.differences ?? []} />
-          {review.flagged && review.flagged.length > 0 && <span className="attention line">Marked as not right, without a correction: {review.flagged.join(', ')}.</span>}
           {review.comment && <span className="quote">{review.comment}</span>}
         </>
       )}
@@ -487,7 +486,6 @@ function Standing({ row, stage }: { row: AdminRow; stage: Stage }): ReactNode {
         <>
           <strong className="attention">The contact asks for changes</strong>
           <span className="muted line">{who}</span>
-          {review.flagged && review.flagged.length > 0 && <span className="attention line">Marked as not right: {review.flagged.join(', ')}.</span>}
           <span className="quote">{review.comment}</span>
           <span className="muted line">Correct the card, then ask the contact again.</span>
         </>

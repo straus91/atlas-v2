@@ -2,8 +2,8 @@
 // No account is needed; the link itself is the key.
 //
 // Two ways to answer. The quick one is a single button. The careful one opens the card in the
-// card creator (a separate site, in a frame), where every section carries a tick and anything
-// wrong can be corrected on the spot; the work is kept on the server as they go, and "Mark as
+// card creator (a separate site, in a frame), where every section counts as right until the
+// author corrects something in it; the work is kept on the server as they go, and "Mark as
 // reviewed" at the end sends it to the administrator. Without a card creator the page falls
 // back to reading the card and writing what should change.
 
@@ -86,7 +86,7 @@ export default function Validate({ token, creator, onWide }: ValidateProps) {
   const kind = 'Dataset' in page.record.card ? 'dataset' : 'model'
   const done = page.status === 'approved'
   const hasAnswered = page.status === 'confirmed' || page.status === 'changes' || page.status === 'edited'
-  const started = page.draft !== null && page.draft.differences.length + page.draft.flagged.length > 0
+  const started = page.draft !== null && page.draft.differences.length > 0
   const said =
     page.status === 'confirmed' ? 'You said the card is correct.'
       : page.status === 'edited' ? 'You sent a corrected card.'
@@ -199,8 +199,8 @@ function Check({ page, token, creator, name, comment, onName, onComment, onAnswe
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   // What the creator is given when it is ready: read once, so a later re-render never reopens the card over the author's work.
-  const [opening] = useState(() => ({ card: page.draft?.card ?? page.record.card, original: page.record.card, flagged: page.draft?.flagged ?? page.flagged }))
-  const lastSaved = useRef(page.draft ? JSON.stringify([page.draft.card, page.draft.flagged]) : '')
+  const [opening] = useState(() => ({ card: page.draft?.card ?? page.record.card, original: page.record.card }))
+  const lastSaved = useRef(page.draft ? JSON.stringify(page.draft.card) : '')
   const waiting = useRef<{ id: string; timer: number } | null>(null)
   const answer = useRef({ name, comment })
   useEffect(() => {
@@ -219,7 +219,7 @@ function Check({ page, token, creator, name, comment, onName, onComment, onAnswe
       setBusy(false)
       return
     }
-    sendAnswer(token, { correct: result.flagged.length === 0, name: answer.current.name, comment: answer.current.comment, how: 'sections', card: result.card, flagged: result.flagged })
+    sendAnswer(token, { correct: true, name: answer.current.name, comment: answer.current.comment, how: 'sections', card: result.card })
       .then(onAnswered, (error: Error) => {
         setProblem(error.message)
         setBusy(false)
@@ -230,7 +230,7 @@ function Check({ page, token, creator, name, comment, onName, onComment, onAnswe
     () => listenToCreator(() => frame.current?.contentWindow ?? null, creator.origin, {
       onReady: () => {
         if (!frame.current?.contentWindow) return
-        openInCreator(frame.current.contentWindow, creator.origin, { cardType, title, card: opening.card, check: { original: opening.original, flagged: opening.flagged } })
+        openInCreator(frame.current.contentWindow, creator.origin, { cardType, title, card: opening.card, check: { original: opening.original } })
         setConnected(true)
       },
       onProgress: setProgress,
@@ -242,12 +242,11 @@ function Check({ page, token, creator, name, comment, onName, onComment, onAnswe
   // Keep the author's version on the server a moment after every change. Opening the card without touching it keeps nothing.
   useEffect(() => {
     if (!progress) return
-    const now = JSON.stringify([progress.card, progress.flagged])
-    const untouched = progress.changed.length === 0 && progress.flagged.length === 0
-    if (now === lastSaved.current || (untouched && lastSaved.current === '')) return
+    const now = JSON.stringify(progress.card)
+    if (now === lastSaved.current || (progress.changed.length === 0 && lastSaved.current === '')) return
     const timer = window.setTimeout(() => {
       setSaved('saving')
-      saveDraft(token, progress.card, progress.flagged).then(
+      saveDraft(token, progress.card).then(
         (draft) => {
           lastSaved.current = now
           setDifferences(draft.differences)
@@ -260,15 +259,9 @@ function Check({ page, token, creator, name, comment, onName, onComment, onAnswe
     return () => window.clearTimeout(timer)
   }, [progress, token, onDraft])
 
-  const flagged = progress?.flagged ?? opening.flagged
   const problems = progress?.problems ?? 0
-  const untouched = differences.length === 0 && flagged.length === 0
 
   const finish = () => {
-    if (flagged.length && !comment.trim()) {
-      setProblem(`You marked ${flagged.join(', ')} as not right. Please write what is wrong there, so the card can be corrected.`)
-      return
-    }
     if (!frame.current?.contentWindow) return
     setBusy(true)
     setProblem(null)
@@ -285,8 +278,8 @@ function Check({ page, token, creator, name, comment, onName, onComment, onAnswe
   return (
     <>
       <p className="muted check-intro">
-        Every section starts ticked as right. Go through them on the left; if something is wrong, correct it in place, or untick the section
-        and say what is wrong at the end. <button type="button" className="link" onClick={onClose}>Back to reading the card</button>
+        Every section counts as right until you change it. Go through them on the left; if something is wrong, correct it in place and
+        the section is marked as edited by you. <button type="button" className="link" onClick={onClose}>Back to reading the card</button>
       </p>
       <iframe ref={frame} className="creator-frame check-frame" src={`${creator.url}/?check=1`} title="Your card, section by section"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups" />
@@ -294,17 +287,12 @@ function Check({ page, token, creator, name, comment, onName, onComment, onAnswe
 
       <section className="panel answer">
         <h2>Finish your review</h2>
-        {untouched ? (
+        {differences.length === 0 ? (
           <p>You have not changed anything. Marking the card as reviewed says that it is correct as it is.</p>
         ) : (
           <>
-            {differences.length > 0 && (
-              <>
-                <p><strong>Your corrections ({differences.length})</strong></p>
-                <Differences rows={differences} />
-              </>
-            )}
-            {flagged.length > 0 && <p><strong>Marked as not right:</strong> {flagged.join(', ')}. Please say below what is wrong there.</p>}
+            <p><strong>Your corrections ({differences.length})</strong></p>
+            <Differences rows={differences} />
           </>
         )}
         {problems > 0 && (
@@ -318,9 +306,9 @@ function Check({ page, token, creator, name, comment, onName, onComment, onAnswe
           <input type="text" value={name} maxLength={200} autoComplete="name" onChange={(event) => onName(event.target.value)} />
         </label>
         <label>
-          Comments <span className="muted">({flagged.length ? 'needed: what is wrong in the sections you unticked' : 'optional'})</span>
+          Comments <span className="muted">(optional)</span>
           <textarea rows={4} value={comment} maxLength={4000} onChange={(event) => onComment(event.target.value)}
-            placeholder="Anything the administrator should know." />
+            placeholder="Anything the administrator should know, for example something that is wrong but that you could not correct here." />
         </label>
         {problem && <p className="banner bad" role="alert">{problem}</p>}
         <div className="row">
