@@ -5,6 +5,7 @@
 # What it does, in order:
 #   1. Downloads (or updates) the code into /opt/atlas-v2.
 #   2. Creates its settings file (.env). No API key is needed: this site calls no AI service.
+#      If the Admin page has no password yet, asks for one (typed here, never shown).
 #   3. Builds and starts it in its own container. No port is opened on the server.
 #   4. Adds its address to the front-door Caddy by appending one block to the front file the
 #      card creator's installer created, and reloads Caddy without restarting it. The other
@@ -56,6 +57,45 @@ if [ ! -f .env ]; then
     printf '\n# This server: also apply deploy/docker-compose.droplet.yml (no open port, private network).\nCOMPOSE_FILE=docker-compose.yml:deploy/docker-compose.droplet.yml\n' >> .env
 fi
 grep -q '^COMPOSE_FILE=' .env || printf '\nCOMPOSE_FILE=docker-compose.yml:deploy/docker-compose.droplet.yml\n' >> .env
+
+# Replace (or add) one line of the settings file without touching the others.
+setting() { grep -vE "^$1=" .env > .env.next || true; printf '%s=%s\n' "$1" "$2" >> .env.next; mv -f .env.next .env; }
+value()   { grep -E "^$1=" .env | tail -n 1 | cut -d= -f2- || true; }
+
+# The links in emails to authors must carry this site's public address.
+[ -n "$(value SITE_URL)" ] || setting SITE_URL "https://$HOST"
+
+# The Admin page (author review, new cards) stays off until it has a password. It is asked for
+# here, typed where nobody sees it, and written only to the settings file on this server.
+if [ -z "$(value ADMIN_PASSWORD)" ]; then
+    if [ -r /dev/tty ]; then
+        say "The Admin page needs a password of your choice"
+        echo "    At least 10 characters: letters, digits and . _ - only. Nothing shows while you type."
+        echo "    Press Enter without typing to leave the Admin page switched off for now."
+        while true; do
+            printf '    Password: ' > /dev/tty
+            IFS= read -r -s CHOSEN < /dev/tty || CHOSEN=""
+            printf '\n' > /dev/tty
+            [ -z "$CHOSEN" ] && { echo "    No password given: the Admin page stays off. Run this installer again to set one."; break; }
+            if printf '%s' "$CHOSEN" | grep -qE '^[A-Za-z0-9._-]{10,}$'; then
+                printf '    Once more: ' > /dev/tty
+                IFS= read -r -s AGAIN_PW < /dev/tty || AGAIN_PW=""
+                printf '\n' > /dev/tty
+                if [ "$CHOSEN" = "$AGAIN_PW" ]; then
+                    setting ADMIN_PASSWORD "$CHOSEN"
+                    echo "    The Admin page is switched on."
+                    break
+                fi
+                echo "    The two did not match. Try again."
+            else
+                echo "    That does not fit (10 or more of: letters, digits . _ -). Try again."
+            fi
+        done
+        unset CHOSEN AGAIN_PW
+    else
+        echo "    NOTE: no keyboard is attached, so no Admin password was asked for; the Admin page stays off."
+    fi
+fi
 
 # ---------------------------------------------------------------- 3. the site
 say "Building and starting ATLAS V2. The first time takes a few minutes; nothing is printed until it finishes."
@@ -147,6 +187,8 @@ if [ "$CODE" = 200 ]; then
     printf '\nDONE. ATLAS V2 is live at https://%s\n' "$HOST"
     echo "The library fills in by itself over the next minute or two (the cards are being read from ATLAS)."
     echo "To update it later:  cd $APP_DIR && git pull && docker compose up -d --build"
+    [ -z "$(value ADMIN_PASSWORD)" ] || echo "Admin page: https://$HOST/#/admin (author review, the outbox, and adding new cards from a file)."
+    [ -n "$(value SMTP_HOST)" ] || echo "No mail server is set, so emails to authors are written to the Admin outbox instead of sent (see .env.example to set one)."
 else
     printf '\nThe site and Caddy are running, but https://%s answered "%s" instead of 200.\n' "$HOST" "$CODE"
     echo "Existing sites are unaffected. Often this is the certificate still being issued, or the DNS"
