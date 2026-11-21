@@ -28,8 +28,10 @@ export interface LibraryCard {
   results: ReadResult[]
   results_read: boolean
   search: string
-  /** A card this visitor sent from the creator: kept in their browser, not part of the published library. */
+  /** A draft: hidden from visitors until an administrator publishes it. Only administrators are ever sent one. */
   draft?: boolean
+  /** Someone sent this card from the Creator page. */
+  submission?: boolean
   /** When the card was marked as author-reviewed: its contact person confirmed or corrected it and an administrator gave the final OK. */
   author_reviewed?: string | null
   /** The card shown is its author's corrected version, not ATLAS's copy. */
@@ -38,6 +40,8 @@ export interface LibraryCard {
   origin?: 'atlas' | 'new'
   /** The paper a new card was drafted from. */
   paper?: Paper | null
+  /** The journal of the card's paper, named in full: of the paper a new card was drafted from, else of the card's first reference. */
+  journal?: string
 }
 
 export interface Paper {
@@ -94,37 +98,50 @@ export async function getHealth(): Promise<Health> {
   return (await response.json()) as Health
 }
 
-/** A card that is not in the library (one just received from the creator), described the same way. */
-export async function describeCard(card: Record<string, unknown>, description: string): Promise<LibraryRecord> {
-  const response = await fetch(`/api/describe?description=${encodeURIComponent(description)}`, {
+/** Send a card received from the creator for review. It waits as a draft until an administrator publishes it. */
+export async function submitCard(card: Record<string, unknown>, description: string, name: string, email: string): Promise<{ title: string }> {
+  const response = await fetch('/api/submissions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(card),
+    body: JSON.stringify({ card, description, name: name.trim(), email: email.trim() }),
   })
-  if (!response.ok) throw new Error(`The card could not be described (${response.status}).`)
-  return (await response.json()) as LibraryRecord
+  if (response.ok) return (await response.json()) as { title: string }
+  let reason = `The card could not be sent (${response.status}). Check the connection and try again.`
+  try {
+    const detail = ((await response.json()) as { detail?: unknown }).detail
+    if (typeof detail === 'string') reason = detail
+  } catch {
+    // not a message from the site itself: keep the plain reason
+  }
+  throw new Error(reason)
+}
+
+// A signed-in administrator reads the library through an address of their own, which also gives the drafts.
+let asAdmin = false
+export function readAsAdmin(on: boolean) {
+  asAdmin = on
+}
+
+/** Fetch from the library; if the administrator's session has ended, as a visitor. */
+async function fromLibrary(path: string): Promise<Response> {
+  if (asAdmin) {
+    const response = await fetch(`/api/admin/library${path}`, { credentials: 'same-origin' })
+    if (response.status !== 401) return response
+    asAdmin = false
+  }
+  return fetch(`/api/library${path}`)
 }
 
 export async function getLibrary(): Promise<LibraryIndex> {
-  const response = await fetch('/api/library')
+  const response = await fromLibrary('')
   if (!response.ok) throw new Error(`The library could not be loaded (${response.status}).`)
   const index = (await response.json()) as LibraryIndex & { author_reviewed?: Record<string, string> }
   const marks = index.author_reviewed ?? {}
   return { ...index, cards: index.cards.map((card) => ({ ...card, author_reviewed: marks[card.id] ?? null })) }
 }
 
-// Cards that live in this browser only (the visitor's drafts), looked up before asking the server.
-const local = new Map<string, LibraryRecord>()
-
-export function setLocalRecords(records: LibraryRecord[]) {
-  local.clear()
-  for (const record of records) if (record.facts) local.set(record.facts.id, record)
-}
-
 export async function getLibraryCard(id: string): Promise<LibraryRecord> {
-  const mine = local.get(id)
-  if (mine) return mine
-  const response = await fetch(`/api/library/${encodeURIComponent(id)}`)
+  const response = await fromLibrary(`/${encodeURIComponent(id)}`)
   if (response.status === 404) throw new Error('That card is not in the library.')
   if (!response.ok) throw new Error(`The card could not be loaded (${response.status}).`)
   return (await response.json()) as LibraryRecord
@@ -162,7 +179,7 @@ export interface FilterSpec {
 
 export const NOT_STATED = 'Not stated'
 export const PUBLISHED = 'Published'
-export const DRAFT = 'Draft (only in this browser)'
+export const DRAFT = 'Draft (hidden from visitors)'
 export const REVIEWED = 'Author-reviewed'
 export const NOT_REVIEWED = 'Not author-reviewed'
 export const ON_ATLAS = 'On ATLAS'
@@ -185,10 +202,9 @@ export const FILTERS: FilterSpec[] = [
   // Only offered once at least one card carries the mark.
   { key: 'review', label: 'Author review', main: false, values: (card) => [card.author_reviewed ? REVIEWED : NOT_REVIEWED], order: [REVIEWED, NOT_REVIEWED] },
   // Only offered when the library holds cards that are not on ATLAS.
-  { key: 'origin', label: 'Source', main: false, values: (card) => (card.draft ? [] : [isNew(card) ? NEW : ON_ATLAS]), order: [ON_ATLAS, NEW] },
-  // The journal of the paper a new card was drafted from. Only new cards have one.
-  { key: 'journal', label: 'Journal', main: false, values: (card) => (card.paper?.journal ? [card.paper.journal] : []) },
-  // Shown as a switch above the filters, not in a menu, and only when the visitor has drafts (cards they sent from the creator).
+  { key: 'origin', label: 'Source', main: false, values: (card) => [isNew(card) ? NEW : ON_ATLAS], order: [ON_ATLAS, NEW] },
+  { key: 'journal', label: 'Journal', main: false, values: (card) => (card.journal ? [card.journal] : []) },
+  // Shown as a switch above the filters, not in a menu, and only to an administrator who has drafts.
   { key: 'status', label: 'Status', main: false, values: (card) => [card.draft ? DRAFT : PUBLISHED], order: [DRAFT, PUBLISHED] },
 ]
 
@@ -242,11 +258,29 @@ export function optionsFor(cards: LibraryCard[], query: Query, spec: FilterSpec)
 // ------------------------------------------------------------------ sorting and wording
 export type SortKey = 'title' | 'newest' | 'oldest' | 'largest'
 export const SORTS: { key: SortKey; label: string }[] = [
-  { key: 'title', label: 'Name (A to Z)' },
   { key: 'newest', label: 'Newest publication' },
   { key: 'oldest', label: 'Oldest publication' },
+  { key: 'title', label: 'Name (A to Z)' },
   { key: 'largest', label: 'Most patients' },
 ]
+
+// The order is the newest first unless the visitor chose another one, which is then kept for their next visit.
+const SORT_KEY = 'atlas-v2-library-sort'
+export function readSort(): SortKey {
+  try {
+    const saved = localStorage.getItem(SORT_KEY)
+    return SORTS.some((sort) => sort.key === saved) ? (saved as SortKey) : 'newest'
+  } catch {
+    return 'newest'
+  }
+}
+export function rememberSort(key: SortKey) {
+  try {
+    localStorage.setItem(SORT_KEY, key)
+  } catch {
+    // private window: the choice simply is not remembered
+  }
+}
 
 export function sortCards(cards: LibraryCard[], key: SortKey): LibraryCard[] {
   const byTitle = (a: LibraryCard, b: LibraryCard) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })

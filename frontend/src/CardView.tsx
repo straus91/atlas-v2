@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { CardToOpen } from './host.ts'
 import { NewBadge, ReviewedBadge, TypeBadge, reviewedNote } from './Library.tsx'
+import { setCardStatus } from './review.ts'
 import { NOT_STATED, REVIEWED, getLibraryCard, isNew, libraryLink, saveCard, sizeParts } from './library.ts'
 import type { LibraryCard, LibraryRecord, ReadResult } from './library.ts'
 import { parseResults } from './results.ts'
@@ -35,9 +36,19 @@ type CardType = 'dataset' | 'model'
 type OnEdit = ((card: CardToOpen) => void) | null
 
 /** A card from the library, fetched by its id. */
-export function CardPage({ id, onEdit, onRemoveDraft }: { id: string; onEdit: OnEdit; onRemoveDraft: (id: string) => void }) {
+export function CardPage({ id, onEdit, admin, onChanged }: { id: string; onEdit: OnEdit; admin: boolean; onChanged: () => void }) {
   const [record, setRecord] = useState<LibraryRecord | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  /** Publish the card, or make it a draft again (administrators, new cards only). */
+  const setStatus = (status: 'draft' | 'published') => {
+    setBusy(true)
+    setCardStatus([id], status)
+      .then(() => getLibraryCard(id))
+      .then((found) => (setRecord(found), onChanged()), (error: Error) => setFailure(error.message))
+      .finally(() => setBusy(false))
+  }
 
   useEffect(() => {
     let current = true
@@ -61,13 +72,14 @@ export function CardPage({ id, onEdit, onRemoveDraft }: { id: string; onEdit: On
       </>
     )
   if (!record) return <p className="muted">Loading the card…</p>
-  return <CardBody record={record} onEdit={onEdit} onRemoveDraft={onRemoveDraft} backTo={lastLibraryView()} backLabel="Library" />
+  return <CardBody record={record} onEdit={onEdit} onStatus={admin && !busy ? setStatus : null} backTo={lastLibraryView()} backLabel="Library" />
 }
 
 interface CardBodyProps {
   record: LibraryRecord
   onEdit: OnEdit
-  onRemoveDraft: (id: string) => void
+  /** Publishes the card or makes it a draft. Null for visitors, which hides the buttons. */
+  onStatus?: ((status: 'draft' | 'published') => void) | null
   backTo: string
   backLabel: string
   /** Only the card: no way back, no download and no creator. For the page a contact person reads. */
@@ -75,7 +87,7 @@ interface CardBodyProps {
 }
 
 /** One card laid out for reading. Used for library cards and for a card just received from the creator. */
-export function CardBody({ record, onEdit, onRemoveDraft, backTo, backLabel, bare = false }: CardBodyProps) {
+export function CardBody({ record, onEdit, onStatus = null, backTo, backLabel, bare = false }: CardBodyProps) {
   const cardType: CardType = 'Dataset' in record.card ? 'dataset' : 'model'
   const body = (record.card[cardType === 'dataset' ? 'Dataset' : 'Model'] ?? {}) as Dict
   const facts = record.facts
@@ -90,10 +102,19 @@ export function CardBody({ record, onEdit, onRemoveDraft, backTo, backLabel, bar
   return (
     <article className="card-view">
       {!bare && <a className="back" href={backTo}>← {backLabel}</a>}
-      {facts?.draft && (
-        <p className="banner warn">
-          This is a draft you sent from the card creator. It is kept in this browser and only you can see it; it is not part of the published
-          library. <button type="button" className="link" onClick={() => onRemoveDraft(facts.id)}>Remove this draft</button>
+      {facts?.draft && !bare && (
+        <p className="banner warn status-line">
+          <span>
+            <strong>Draft.</strong> Visitors do not see this card{facts.submission ? '; it was sent from the Creator page' : ''}. Only
+            administrators do, until it is published.
+          </span>
+          {onStatus && <button type="button" className="primary" onClick={() => onStatus('published')}>Publish</button>}
+        </p>
+      )}
+      {facts && !facts.draft && isNew(facts) && onStatus && !bare && (
+        <p className="muted status-line">
+          <span>Published: everyone sees this card.</span>
+          <button type="button" className="link" onClick={() => onStatus('draft')}>Make it a draft</button>
         </p>
       )}
 

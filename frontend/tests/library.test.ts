@@ -1,7 +1,7 @@
 // Searching, filtering and counting in the library must agree with each other: the number
 // beside a filter option is exactly the number of cards choosing it would show.
 import { describe, expect, it } from 'vitest'
-import { FILTERS, NOT_STATED, filterCards, libraryLink, optionsFor, paramsToQuery, queryToParams, sizeParts, sortCards } from '../src/library.ts'
+import { FILTERS, NOT_STATED, SORTS, filterCards, libraryLink, optionsFor, paramsToQuery, queryToParams, readSort, sizeParts, sortCards } from '../src/library.ts'
 import type { LibraryCard, Query } from '../src/library.ts'
 import { parseRoute } from '../src/route.ts'
 
@@ -52,10 +52,10 @@ describe('library filters', () => {
     expect(parseRoute('#/creator').page).toBe('creator')
   })
 
-  it('keeps a visitor’s drafts apart from the published cards', () => {
+  it('keeps the drafts an administrator sees apart from the published cards', () => {
     const withDraft = [card({ title: 'My new set', draft: true, year: 2026 }), ...CARDS]
     const statuses = optionsFor(withDraft, { text: '', chosen: {} }, spec('status'))
-    expect(statuses).toEqual([{ value: 'Draft (only in this browser)', count: 1 }, { value: 'Published', count: 4 }])
+    expect(statuses).toEqual([{ value: 'Draft (hidden from visitors)', count: 1 }, { value: 'Published', count: 4 }])
     expect(filterCards(withDraft, { text: '', chosen: { year: ['2026'] } }).map((found) => found.title)).toEqual(['My new set'])
     expect(filterCards(withDraft, { text: '', chosen: { status: ['Published'] } })).toHaveLength(4)
   })
@@ -63,6 +63,8 @@ describe('library filters', () => {
   it('sorts, and words sizes', () => {
     expect(sortCards(CARDS, 'newest').map((found) => found.title)).toEqual(['Liver segmenter', 'Liver CT set', 'Brain MRI set', 'Fracture finder'])
     expect(sortCards(CARDS, 'largest')[0].title).toBe('Liver CT set')
+    expect(SORTS[0].key).toBe('newest') // the order the list opens in
+    expect(readSort()).toBe('newest') // nothing remembered (and no storage here): the newest first
     expect(sizeParts(CARDS[0])).toEqual(['500 patients', '12,000 images'])
   })
 })

@@ -8,6 +8,7 @@ project that this site shows in a frame on its Creator page.
     GET  /api/health            status, how many cards are held, where the card creator is
     GET  /api/library           every published card as a small record to search and filter
     GET  /api/library/{id}      one card in full
+    POST /api/submissions       a card sent from the Creator page; kept as a draft for an administrator
     POST /api/describe          a card -> its record (used to preview a card just received)
 
 Author review (see review.py): a card's contact person confirms or corrects the card through a
@@ -90,12 +91,8 @@ def _with_revision(card_id: str, record: dict[str, Any], revision: dict[str, Any
     return {**shown, "facts": {**library.summarize(card_id, shown), "author_edited": True}}
 
 
-@app.get("/api/library")
-def get_library() -> dict[str, Any]:
-    """`syncing` is true while the cards are being read from ATLAS (a minute or two the first time).
-    `author_reviewed`: card id -> when it was marked, for the cards that carry the mark.
-    A card whose author corrected it (and an administrator approved that) is listed as corrected."""
-    index = library.library_index()
+def _library(drafts: bool) -> dict[str, Any]:
+    index = library.library_index(drafts=drafts)
     revisions = reviews.revisions(_fingerprint)
     if revisions:
         cards = []
@@ -106,18 +103,81 @@ def get_library() -> dict[str, Any]:
     return {**index, "author_reviewed": reviews.marks(_fingerprint)}
 
 
-@app.get("/api/library/{card_id}")
-def get_library_card(card_id: str) -> dict[str, Any]:
-    """{"card": the card as this site shows it, "title", "description": ATLAS's own, "facts": its record}"""
+@app.get("/api/library")
+def get_library() -> dict[str, Any]:
+    """Every published card. `syncing` is true while the cards are being read from ATLAS (a minute or
+    two the first time). `author_reviewed`: card id -> when it was marked, for the cards that carry the mark.
+    A card whose author corrected it (and an administrator approved that) is listed as corrected.
+    Drafts are never listed here: see /api/admin/library."""
+    return _library(drafts=False)
+
+
+def _library_card(card_id: str, drafts: bool) -> dict[str, Any]:
     found = library.library_card(card_id)
-    if found is None:
+    if found is None or (library.is_draft(card_id) and not drafts):
         raise HTTPException(404, "That card is not in the library.")
     revision = reviews.revisions(_fingerprint).get(card_id)
     if revision is not None:
         found = _with_revision(card_id, found, revision)
     if found["facts"] is not None:
         found["facts"] = {**found["facts"], "author_reviewed": reviews.marks(_fingerprint).get(card_id)}
-    return found
+    return {key: value for key, value in found.items() if key != "submitted"}       # who sent a card is for administrators
+
+
+@app.get("/api/library/{card_id}")
+def get_library_card(card_id: str) -> dict[str, Any]:
+    """{"card": the card as this site shows it, "title", "description": ATLAS's own, "facts": its record}"""
+    return _library_card(card_id, drafts=False)
+
+
+# ------------------------------------------------------------------ cards sent from the Creator page
+class Submission(BaseModel):
+    card: dict[str, Any]
+    description: str = Field("", max_length=5000)
+    name: str = Field("", max_length=200)
+    email: str = Field("", max_length=320)
+
+
+SUBMISSIONS_PER_HOUR = 30
+_submitted_at: list[float] = []
+_submit_lock = threading.Lock()
+
+
+@app.post("/api/submissions")
+def submit_card(sent: Submission, request: Request) -> dict[str, Any]:
+    """Anyone can send a card. It is checked against the ATLAS schema (by asking the card creator's
+    server) and kept as a draft that only administrators see, until one of them publishes it."""
+    email = sent.email.strip()
+    if email and not review.EMAIL.fullmatch(email):
+        raise HTTPException(400, f'"{email}" is not an email address.')
+    with _submit_lock:
+        recent = [at for at in _submitted_at if at > time.time() - 3600]
+        _submitted_at[:] = recent
+        if len(recent) >= SUBMISSIONS_PER_HOUR:
+            raise HTTPException(429, "Many cards were sent in the last hour. Please try again later.")
+        _submitted_at.append(time.time())
+    try:
+        review._check_size(sent.card)
+        if "Dataset" not in sent.card and "Model" not in sent.card:
+            raise review.ReviewError('A card has a "Dataset" or a "Model" section.')
+        problems = _schema_problems(sent.card)
+    except review.ReviewError as error:
+        raise HTTPException(400, str(error).replace("The corrected card", "The card").replace("Nothing was published", "Nothing was sent")) from None
+    if problems:
+        raise HTTPException(400, "The card does not fit the ATLAS schema, so it was not sent: " + "; ".join(problems[:5])
+                            + ("; …" if len(problems) > 5 else ""))
+    try:
+        card_id = library.add_submission(sent.card, description=sent.description, name=sent.name, email=email)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+    title = (library.library_card(card_id) or {}).get("title") or card_id
+    log.info("submission: %s kept as a draft", card_id)
+    site = settings.site_url or str(request.base_url).rstrip("/")
+    who = ", ".join(part for part in (" ".join(sent.name.split()), email) if part) or "someone who left no name"
+    reviews.post(settings.mail, to=reviews.settings()["admin_email"], subject=f'A card was submitted: "{title}"',
+                 body=f'A card was sent from the Creator page by {who}.\n\n"{title}"\n\nIt is a draft: visitors do not see it until you '
+                      f"publish it.\n\n{site}/#/admin/submissions", about=title, kind="notice")
+    return {"ok": True, "title": title}
 
 
 @app.post("/api/describe")
@@ -292,11 +352,11 @@ def admin_reviews() -> dict[str, Any]:
     """Every card with the people it names as contact and where its review stands."""
     saved = reviews.all()
     rows = []
-    for facts in library.library_index()["cards"]:
+    for facts in library.library_index(drafts=True)["cards"]:
         record = library.library_card(facts["id"])
         if record is None:
             continue
-        rows.append({"id": facts["id"], "title": facts["title"], "type": facts["type"],
+        rows.append({"id": facts["id"], "title": facts["title"], "type": facts["type"], "draft": facts["draft"],
                      "contacts": review.contacts_of(record["card"]), "review": _admin_view(saved.get(facts["id"]), record["card"])})
     return {"cards": rows, "settings": reviews.settings(), "link_days": review.LINK_DAYS, "outbox": reviews.outbox(),
             "new_cards": library.new_card_count(),
@@ -429,6 +489,55 @@ def admin_mark(card_id: str, by_hand: ByHand) -> dict[str, Any]:
 def admin_clear(card_id: str) -> dict[str, Any]:
     reviews.clear(card_id)
     return {"review": None}
+
+
+# ------------------------------------------------------------------ the library as an administrator sees it
+@app.get("/api/admin/library", dependencies=[Depends(require_admin)])
+def admin_library() -> dict[str, Any]:
+    """Every card, drafts included (their record says `draft`)."""
+    return _library(drafts=True)
+
+
+@app.get("/api/admin/library/{card_id}", dependencies=[Depends(require_admin)])
+def admin_library_card(card_id: str) -> dict[str, Any]:
+    return _library_card(card_id, drafts=True)
+
+
+@app.get("/api/admin/cards", dependencies=[Depends(require_admin)])
+def admin_cards() -> dict[str, Any]:
+    """The new cards (from a file, or submitted from the Creator page) with their status. ATLAS's own
+    cards are not listed: they are always published."""
+    stages = {card_id: state.get("status", "") for card_id, state in reviews.all().items()}
+    return {"cards": [{**row, "review": stages.get(row["id"], "")} for row in library.new_cards()]}
+
+
+class Chosen(BaseModel):
+    ids: list[str] = Field(max_length=5000)
+
+
+class NewStatus(Chosen):
+    status: str = Field(max_length=20)
+
+
+@app.post("/api/admin/cards/status", dependencies=[Depends(require_admin)])
+def admin_card_status(change: NewStatus) -> dict[str, Any]:
+    """Publish cards (visitors see them) or make them drafts again (only administrators do). Any number at once."""
+    try:
+        changed = library.set_status(change.ids, change.status)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+    log.info("library: %d cards are now %s", changed, change.status)
+    return {"changed": changed}
+
+
+@app.post("/api/admin/cards/remove", dependencies=[Depends(require_admin)])
+def admin_remove_cards(chosen: Chosen) -> dict[str, Any]:
+    """Delete new cards for good, with any review of theirs."""
+    gone = library.remove_cards(chosen.ids)
+    for card_id in gone:
+        reviews.clear(card_id)
+    log.info("library: %d new cards deleted", len(gone))
+    return {"removed": len(gone)}
 
 
 # ------------------------------------------------------------------ new cards: not on ATLAS, added as one file

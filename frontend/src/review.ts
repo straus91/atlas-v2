@@ -63,8 +63,25 @@ export interface AdminRow {
   id: string
   title: string
   type: 'dataset' | 'model'
+  /** Hidden from visitors until it is published. */
+  draft: boolean
   contacts: Contact[]
   review: Review | null
+}
+
+/** A new card as the Cards and Submissions lists show it. */
+export interface ManagedCard {
+  id: string
+  title: string
+  type: 'dataset' | 'model'
+  status: 'draft' | 'published'
+  source: 'file' | 'submission'
+  journal: string
+  year: number | null
+  /** Who sent it from the Creator page, and when. */
+  submitted: { at: string; name: string; email: string } | null
+  /** Where its author review stands; empty when its contact has not been asked. */
+  review: string
 }
 
 export interface ReviewSettings {
@@ -152,6 +169,10 @@ export const signOut = () => call<Session>('POST', '/api/admin/logout')
 export const getReviews = () => call<AdminData>('GET', '/api/admin/reviews')
 export const saveSettings = (change: Partial<Pick<ReviewSettings, 'emails_enabled' | 'subject' | 'body' | 'admin_email'>>) =>
   call<ReviewSettings>('PUT', '/api/admin/settings', change)
+export const getAdminCards = () => call<{ cards: ManagedCard[] }>('GET', '/api/admin/cards').then((answer) => answer.cards)
+/** Publish cards, or make them drafts again; any number at once. */
+export const setCardStatus = (ids: string[], status: 'draft' | 'published') => call<{ changed: number }>('POST', '/api/admin/cards/status', { ids, status })
+export const removeCards = (ids: string[]) => call<{ removed: number }>('POST', '/api/admin/cards/remove', { ids })
 /** One message to this address, to see that the mail account works. */
 export const sendTestEmail = (to: string) => call<{ sent: boolean; problem: string; outbox: OutboxMessage[] }>('POST', '/api/admin/test-email', { to })
 export const approve = (id: string) => call<{ review: Review }>('POST', `/api/admin/reviews/${encodeURIComponent(id)}/approve`)

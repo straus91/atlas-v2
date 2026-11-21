@@ -11,8 +11,10 @@ cards ATLAS publishes and shows them differently.
   opens the dataset or publication.
 - **Card page**: a summary of the facts a reader chooses by, then every section the card
   contains, with partitions and results as tables.
-- **Overview**: what the library covers and where it is thin (modality by subspecialty, cards
-  per year, completeness, tasks, metrics). Every number is a link to those cards.
+- **Overview**: what the library covers and where it is thin: a coverage table whose rows and
+  columns the reader chooses (modality, subspecialty, intended use, metric, population, year,
+  type, journal), cards per year, completeness, the journals the cards' papers appeared in,
+  tasks and metrics. Every number is a link to those cards.
 - **Author review**: a card can carry a gold star, "Author-reviewed". In the **Admin** page an
   administrator switches on validation emails, ticks cards, and their contact persons get a
   personal link. Behind it they either confirm the card with one button or go through it section
@@ -21,11 +23,16 @@ cards ATLAS publishes and shows them differently.
   and a corrected card replaces the old one. Cards are published either way; the star is extra.
   See [Author review](#author-review).
 - **New cards**: cards that are not on ATLAS (for example drafted from published papers) can be
-  added in the Admin page as one file. They are listed with ATLAS's cards and always marked
+  added by an administrator as one file. They are listed with ATLAS's cards and always marked
   "New", with the paper they came from. See [New cards](#new-cards).
 - **Creator**: the [ROADMAP card creator](https://github.com/straus91/roadmap-json), a separate
   project, shown in a frame as on the real ATLAS. Its "Send to ATLAS" button hands the finished
-  card to this site, and "Open in the card creator" on a card page sends a card the other way.
+  card to this site, where the sender presses "Send for review"; "Open in the card creator" on
+  a card page sends a card the other way.
+- **Drafts and admin mode**: a new card is either published (everyone sees it) or a draft (only
+  administrators do). Signing in under Admin switches on admin mode, which adds the drafts to
+  Browse and three pages: Author review, Cards and Submissions. See
+  [Drafts, published cards and admin mode](#drafts-published-cards-and-admin-mode).
 
 ## Run it
 
@@ -105,8 +112,30 @@ Adding the same file again replaces the same cards. "Remove all new cards" takes
 New cards are listed in Browse and counted in the Overview with ATLAS's cards. They always carry
 "New", can be filtered with More → Source or More → Journal, and their page says which paper they were drafted
 from and that nobody has checked them against it yet (until their author has reviewed them).
-The Overview shows which journals they come from, each a link to its cards. They are kept in
-`new-cards.json` in the data volume.
+They are kept in `new-cards.json` in the data volume.
+
+## Drafts, published cards and admin mode
+
+Visitors see Browse, Overview and Creator, and only published cards. An administrator who signs
+in (the Admin link) is in **admin mode**: Browse also lists the drafts, marked "Draft", with a
+switch All / Published / Drafts, and the menu gains three pages.
+
+| Page | What it is for |
+|---|---|
+| Author review | Asking contacts to check their cards, the final OK, the outbox and the mail test (see above). A draft can be reviewed by its author before it is published. |
+| Cards | The new cards added from a file, with their status. Tick any number and press Publish, Make draft or Delete. Adding the file again keeps the status you gave each card. |
+| Submissions | The cards people sent from the Creator page. Each arrives as a draft, with the sender's name and email if they gave them. |
+
+A card's own page has the same Publish / Make it a draft button for an administrator. The cards
+read from atlas.rsna.org are always published: they are public there.
+
+A card sent from the Creator page is checked against the ATLAS schema (by asking the card
+creator's server) before it is kept, at most 30 arrive per hour and at most 200 can wait as
+drafts, and the administrator gets a note. The server itself holds drafts back: the public
+addresses (`/api/library`, `/api/library/{id}`) never return one, whoever asks; administrators
+read through `/api/admin/library`. The sender's name and email are shown to administrators only.
+
+The Overview counts published cards only, and tells an administrator how many drafts wait.
 
 ## The card creator is a separate project
 

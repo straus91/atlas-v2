@@ -1,9 +1,13 @@
 // The Creator page: the card creator (a separate site) in a frame, as on the real ATLAS, plus
-// what ATLAS does not have today: the finished card arrives here by itself.
+// what ATLAS does not have today: the finished card arrives here by itself, and is sent on for
+// review without a file being downloaded or uploaded.
 
 import { useEffect, useRef, useState } from 'react'
+import type { FormEvent } from 'react'
 import { listenToCreator, openInCreator } from './host.ts'
 import type { CardToOpen, ReceivedCard } from './host.ts'
+import { submitCard } from './library.ts'
+import { isAddress } from './review.ts'
 
 interface CreatorProps {
   url: string
@@ -12,15 +16,25 @@ interface CreatorProps {
   /** A card from the library to open for editing, once the creator is ready. */
   toOpen: CardToOpen | null
   onOpened: () => void
-  /** The card that just arrived, once it has been added to Browse as a draft. */
-  arrived: { id: string; name: string; description: string; cardType: string } | null
-  onCard: (received: ReceivedCard) => Promise<void>
-  onDismiss: () => void
+  /** A signed-in administrator, who can go straight to the submitted card. */
+  admin: boolean
+  /** A card was sent for review. */
+  onSent: () => void
 }
 
-export default function Creator({ url, origin, hidden, toOpen, onOpened, arrived, onCard, onDismiss }: CreatorProps) {
+const nameOf = (received: ReceivedCard) => {
+  const body = (received.card.Dataset ?? received.card.Model ?? {}) as Record<string, unknown>
+  return typeof body.Name === 'string' && body.Name.trim() ? body.Name.trim() : `Untitled ${received.cardType}`
+}
+
+export default function Creator({ url, origin, hidden, toOpen, onOpened, admin, onSent }: CreatorProps) {
   const frame = useRef<HTMLIFrameElement>(null)
   const [ready, setReady] = useState(false)
+  const [received, setReceived] = useState<ReceivedCard | null>(null) // arrived from the creator, not sent on yet
+  const [sent, setSent] = useState<string | null>(null) // the title of the card just sent for review
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [busy, setBusy] = useState(false)
   const [trouble, setTrouble] = useState<string | null>(null)
 
   useEffect(
@@ -28,13 +42,12 @@ export default function Creator({ url, origin, hidden, toOpen, onOpened, arrived
       onReady: () => setReady(true),
       onCard: (card) => {
         setTrouble(null)
-        onCard(card).then(
-          () => window.scrollTo({ top: 0, behavior: 'smooth' }),
-          () => setTrouble('The card arrived, but it could not be added to Browse. Check the connection and send it again.'),
-        )
+        setSent(null)
+        setReceived(card)
+        window.scrollTo({ top: 0, behavior: 'smooth' })
       },
     }),
-    [origin, onCard],
+    [origin],
   )
 
   useEffect(() => {
@@ -43,26 +56,68 @@ export default function Creator({ url, origin, hidden, toOpen, onOpened, arrived
     onOpened()
   }, [ready, toOpen, origin, onOpened])
 
+  const send = (event: FormEvent) => {
+    event.preventDefault()
+    if (!received) return
+    if (email.trim() && !isAddress(email)) {
+      setTrouble('That is not an email address. Correct it, or leave the box empty.')
+      return
+    }
+    setBusy(true)
+    setTrouble(null)
+    submitCard(received.card, received.description, name, email).then(
+      (answer) => {
+        setBusy(false)
+        setSent(answer.title || nameOf(received))
+        setReceived(null)
+        onSent()
+      },
+      (error: Error) => {
+        setBusy(false)
+        setTrouble(error.message)
+      },
+    )
+  }
+
   return (
     <div hidden={hidden}>
-      {trouble && <p className="banner bad">{trouble}</p>}
-      {arrived && (
-        <section className="panel received" aria-live="polite">
-          <h2>Card received: {arrived.name}</h2>
+      {received && (
+        <form className="panel received" aria-live="polite" onSubmit={send}>
+          <h2>Card received: {nameOf(received)}</h2>
           <p className="muted">
-            The card creator sent this {arrived.cardType} card and its description. No file was downloaded or uploaded. It is now in Browse as
-            a draft.
+            The card creator handed over this {received.cardType} card and its description. No file was downloaded or uploaded. Send it for
+            review: an administrator looks at it before it appears in the library.
           </p>
-          <p className="description">{arrived.description || 'No description was given.'}</p>
+          <p className="description">{received.description || 'No description was given.'}</p>
+          <div className="sender">
+            <label>
+              Your name <span className="muted">(optional)</span>
+              <input type="text" value={name} maxLength={200} autoComplete="name" onChange={(event) => setName(event.target.value)} />
+            </label>
+            <label>
+              Your email <span className="muted">(optional, only the administrators see it)</span>
+              <input type="email" value={email} maxLength={320} autoComplete="email" onChange={(event) => (setEmail(event.target.value), setTrouble(null))} />
+            </label>
+          </div>
+          {trouble && <p className="banner bad" role="alert">{trouble}</p>}
           <div className="row">
-            <a className="button primary" href={`#/library/${arrived.id}`}>Open its page</a>
-            <a className="button" href="#/library?status=Draft+%28only+in+this+browser%29">See it in Browse</a>
-            <button type="button" onClick={onDismiss}>Dismiss</button>
+            <button type="submit" className="primary" disabled={busy}>{busy ? 'Sending…' : 'Send for review'}</button>
+            <button type="button" disabled={busy} onClick={() => (setReceived(null), setTrouble(null))}>Discard</button>
           </div>
           <p className="muted draft-note">
-            This proposal site has no accounts, so the draft is kept in this browser and only you can see it. In ATLAS this step would save it
-            as a draft in your account.
+            This proposal site has no accounts, so a card sent here waits as a draft that only the administrators see. In ATLAS this step
+            would save it in your own account.
           </p>
+        </form>
+      )}
+      {sent && (
+        <section className="panel received" aria-live="polite">
+          <h2>Sent for review: {sent}</h2>
+          <p>The card is with the administrators now. It appears in the library once one of them publishes it.</p>
+          <div className="row">
+            {admin && <a className="button primary" href="#/admin/submissions">Open Submissions</a>}
+            <button type="button" onClick={() => setSent(null)}>Dismiss</button>
+          </div>
         </section>
       )}
       <iframe ref={frame} className="creator-frame" src={url} title="ROADMAP Card Creator"

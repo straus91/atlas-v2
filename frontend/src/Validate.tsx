@@ -146,7 +146,7 @@ export default function Validate({ token, creator, onWide }: ValidateProps) {
       ) : (
         <>
           {shown !== page.record && <p className="banner warn">The card below includes your corrections. They are not published until an administrator approves them.</p>}
-          <CardBody record={shown} onEdit={null} onRemoveDraft={() => undefined} backTo="" backLabel="" bare />
+          <CardBody record={shown} onEdit={null} backTo="" backLabel="" bare />
         </>
       )}
 

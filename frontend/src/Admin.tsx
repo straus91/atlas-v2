@@ -3,26 +3,29 @@
 // their card through a personal link; the card shows "Author-reviewed" once the contact has
 // said it is correct and the administrator has given the final OK.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, FormEvent, ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { FormEvent, ReactNode } from 'react'
+import CardsDesk from './Cards.tsx'
 import { ReviewedBadge, TypeBadge } from './Library.tsx'
 import { day } from './library.ts'
 import {
-  STAGES, SignedOut, addNewCards, addressFor, approve, ask, canAsk, clearReview, getReviews, getSession, isAddress, markByHand, nameFor, readNewCards, removeNewCards,
-  saveSettings, sendTestEmail, signIn, signOut, stageOf,
+  STAGES, SignedOut, addressFor, approve, ask, canAsk, clearReview, getReviews, isAddress, markByHand, nameFor,
+  saveSettings, sendTestEmail, signIn, stageOf,
 } from './review.ts'
 import type { AdminData, AdminRow, OutboxMessage, ReviewSettings, Session, Stage } from './review.ts'
 import { Differences } from './Validate.tsx'
 
-export default function Admin({ onMarksChanged }: { onMarksChanged: () => void }) {
-  const [session, setSession] = useState<Session | null>(null)
-  const [failure, setFailure] = useState<string | null>(null)
+interface AdminProps {
+  /** Who is looking; null while that is being asked. */
+  session: Session | null
+  onSession: (session: Session) => void
+  /** '' = author review, 'cards', 'submissions'. */
+  tab: string
+  /** The library changed (a mark, a status, new cards): Browse should read it again. */
+  onChanged: () => void
+}
 
-  useEffect(() => {
-    getSession().then(setSession, (error: Error) => setFailure(error.message))
-  }, [])
-
-  if (failure) return <p className="banner bad">{failure}</p>
+export default function Admin({ session, onSession, tab, onChanged }: AdminProps) {
   if (!session) return <p className="muted">Loading…</p>
   if (!session.configured)
     return (
@@ -34,8 +37,11 @@ export default function Admin({ onMarksChanged }: { onMarksChanged: () => void }
         </p>
       </section>
     )
-  if (!session.signed_in) return <SignIn onSignedIn={setSession} />
-  return <Desk onSignedOut={() => setSession({ configured: true, signed_in: false })} onMarksChanged={onMarksChanged} />
+  if (!session.signed_in) return <SignIn onSignedIn={onSession} />
+  const signedOut = () => onSession({ configured: true, signed_in: false })
+  if (tab === 'cards' || tab === 'submissions')
+    return <CardsDesk source={tab === 'cards' ? 'file' : 'submission'} onChanged={onChanged} onSignedOut={signedOut} />
+  return <Desk onSignedOut={signedOut} onMarksChanged={onChanged} />
 }
 
 function SignIn({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
@@ -154,7 +160,6 @@ function Desk({ onSignedOut, onMarksChanged }: { onSignedOut: () => void; onMark
       <section className="panel">
         <div className="row spread">
           <h2>Author review</h2>
-          <button type="button" className="link" onClick={() => signOut().then(onSignedOut, onSignedOut)}>Sign out</button>
         </div>
         <p>
           A card shows <span className="reviewed-badge"><span className="star" aria-hidden="true">★</span> Author-reviewed</span> when its contact person has
@@ -190,8 +195,6 @@ function Desk({ onSignedOut, onMarksChanged }: { onSignedOut: () => void; onMark
         )}
         <Outbox messages={data.outbox} />
       </section>
-
-      <NewCards count={data.new_cards} onChanged={changed} onFailed={failed} />
 
       {failure && <p className="banner bad" role="alert">{failure}</p>}
       {outcome && (
@@ -389,6 +392,7 @@ function Row({ row, emails, address, askable, checked, onCheck, onType, onChange
       )}
       <td className="name-cell">
         <a href={`#/library/${row.id}`}>{row.title}</a>
+        {row.draft && <span className="draft-badge" title="Draft: visitors do not see this card until you publish it (under Cards or Submissions)">Draft</span>}
         <span className="line"><TypeBadge type={row.type} /></span>
       </td>
       <td className="contact-cell">
@@ -624,63 +628,6 @@ function Outbox({ messages }: { messages: OutboxMessage[] }) {
         ))}
       </ul>
     </details>
-  )
-}
-
-/** Cards that are not on ATLAS, added from one file (for example the cards drafted from papers). */
-function NewCards({ count, onChanged, onFailed }: { count: number; onChanged: () => void; onFailed: (error: Error) => void }) {
-  const input = useRef<HTMLInputElement>(null)
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
-  const [removing, setRemoving] = useState(false)
-  const failed = (error: Error) => {
-    setBusy(false)
-    if (error instanceof SignedOut) onFailed(error)
-    else setNote({ tone: 'bad', text: error.message })
-  }
-  const picked = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-    setBusy(true)
-    setNote(null)
-    file.text().then(readNewCards).then(addNewCards).then((counts) => {
-      setBusy(false)
-      setNote({ tone: 'ok', text: `${counts.added} card${counts.added === 1 ? '' : 's'} added${counts.replaced ? `, ${counts.replaced} replaced` : ''}. The library now holds ${counts.total} new cards.` })
-      onChanged()
-    }, failed)
-  }
-  const remove = () => {
-    setBusy(true)
-    removeNewCards().then((result) => {
-      setBusy(false)
-      setRemoving(false)
-      setNote({ tone: 'ok', text: `${result.removed} new card${result.removed === 1 ? '' : 's'} removed.` })
-      onChanged()
-    }, failed)
-  }
-  return (
-    <section className="panel new-cards">
-      <h2>New cards</h2>
-      <p>
-        Cards that are not on ATLAS, such as the ones drafted from published papers. They are listed in Browse with ATLAS's cards and always
-        carry <span className="new-badge"><span aria-hidden="true">✦</span> New</span>, with the paper they came from.{' '}
-        <strong>{count}</strong> {count === 1 ? 'is' : 'are'} in the library now.
-      </p>
-      <input ref={input} type="file" accept="application/json,.json" hidden onChange={picked} />
-      <div className="row">
-        <button type="button" disabled={busy} onClick={() => input.current?.click()}>{busy ? 'Working…' : 'Add cards from a file…'}</button>
-        {count > 0 && !removing && <button type="button" className="link" onClick={() => setRemoving(true)}>Remove all new cards</button>}
-        {removing && (
-          <>
-            <button type="button" disabled={busy} onClick={remove}>Yes, remove all {count}</button>
-            <button type="button" className="link" disabled={busy} onClick={() => setRemoving(false)}>Keep them</button>
-          </>
-        )}
-      </div>
-      {note && <p className={`banner ${note.tone}`} role="status">{note.text}</p>}
-      <p className="muted fine">The file is <code>new-cards.json</code>, made by <code>bundle.py</code> in the harvest folder.</p>
-    </section>
   )
 }
 

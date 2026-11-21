@@ -32,19 +32,19 @@ describe('the author-reviewed mark', () => {
 })
 
 describe('new cards', () => {
-  const cards = [card({ title: 'On ATLAS', origin: 'atlas' }), card({ title: 'Older record' }), card({ title: 'From a paper', origin: 'new' }), card({ title: 'Mine', draft: true })]
+  const cards = [card({ title: 'On ATLAS', origin: 'atlas' }), card({ title: 'Older record' }), card({ title: 'From a paper', origin: 'new' }), card({ title: 'Sent in', origin: 'new', draft: true })]
   const spec = FILTERS.find((filter) => filter.key === 'origin')!
 
-  it('can be told from the cards on ATLAS; the draft of a visitor is neither', () => {
-    expect(optionsFor(cards, { text: '', chosen: {} }, spec)).toEqual([{ value: ON_ATLAS, count: 2 }, { value: NEW, count: 1 }])
-    expect(filterCards(cards, { text: '', chosen: { origin: [NEW] } }).map((found) => found.title)).toEqual(['From a paper'])
+  it('can be told from the cards on ATLAS; a draft is a new card too', () => {
+    expect(optionsFor(cards, { text: '', chosen: {} }, spec)).toEqual([{ value: ON_ATLAS, count: 2 }, { value: NEW, count: 2 }])
+    expect(filterCards(cards, { text: '', chosen: { origin: [NEW] } }).map((found) => found.title)).toEqual(['From a paper', 'Sent in'])
   })
 
-  it('can be found by the journal of their paper', () => {
-    const papers = [...cards, card({ title: 'In Radiology', origin: 'new', paper: { journal: 'Radiology' } }), card({ title: 'In Sci Data', origin: 'new', paper: { journal: 'Sci Data' } })]
+  it('and every other card can be found by the journal of its paper', () => {
+    const papers = [...cards, card({ title: 'In Radiology', journal: 'Radiology' }), card({ title: 'In Scientific Data', origin: 'new', journal: 'Scientific Data' })]
     const journal = FILTERS.find((filter) => filter.key === 'journal')!
-    expect(optionsFor(papers, { text: '', chosen: {} }, journal).map((option) => option.value)).toEqual(['Radiology', 'Sci Data'])
-    expect(filterCards(papers, { text: '', chosen: { journal: ['Sci Data'] } }).map((found) => found.title)).toEqual(['In Sci Data'])
+    expect(optionsFor(papers, { text: '', chosen: {} }, journal).map((option) => option.value)).toEqual(['Radiology', 'Scientific Data'])
+    expect(filterCards(papers, { text: '', chosen: { journal: ['Scientific Data'] } }).map((found) => found.title)).toEqual(['In Scientific Data'])
   })
 
   it('are read from the file the harvest makes, and anything else is refused in words', () => {

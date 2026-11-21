@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  DRAFT, FILTERS, NEW, NOT_STATED, PUBLISHED, REVIEWED, SORTS, day, downloadCard, isNew, filterCards, metricsWithValues, optionsFor, paramsToQuery, queryToParams, resultsFor, shortMetric, sizeParts, sortCards,
+  DRAFT, FILTERS, NEW, NOT_STATED, PUBLISHED, REVIEWED, SORTS, day, downloadCard, isNew, filterCards, metricsWithValues, optionsFor, paramsToQuery, queryToParams, readSort, rememberSort, resultsFor, shortMetric, sizeParts, sortCards,
 } from './library.ts'
 import type { Chosen, FilterKey, FilterSpec, LibraryCard, LibraryIndex, Option, Query, SortKey } from './library.ts'
 import { go } from './route.ts'
@@ -69,7 +69,7 @@ export default function Library({ index, failure, params }: LibraryProps) {
   const [text, setText] = useState(query.text)
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [view, setView] = useState<View>(readView)
-  const [sort, setSort] = useState<SortKey>('title')
+  const [sort, setSort] = useState<SortKey>(readSort)
   const [metric, setMetric] = useState<string | null>(null) // null = the most reported one; '' = list the metrics instead
   const bar = useRef<HTMLDivElement>(null)
 
@@ -124,9 +124,9 @@ export default function Library({ index, failure, params }: LibraryProps) {
     return all
   }, [cards, query])
 
-  const mine = cards.filter((card) => card.draft).length
-  const published = cards.length - mine
-  const fresh = cards.filter(isNew).length
+  const drafts = cards.filter((card) => card.draft).length // only an administrator is ever sent drafts
+  const published = cards.length - drafts
+  const fresh = cards.filter((card) => isNew(card) && !card.draft).length
   const starred = cards.filter((card) => card.author_reviewed).length
   const onlyNew = (query.chosen.origin ?? []).includes(NEW)
   const onlyReviewed = (query.chosen.review ?? []).includes(REVIEWED)
@@ -162,9 +162,9 @@ export default function Library({ index, failure, params }: LibraryProps) {
       <div className="lib-bar" ref={bar}>
         <input type="search" className="lib-search" value={text} onChange={(event) => typed(event.target.value)}
           placeholder="Search names, authors, institutions, keywords" aria-label="Search the library" />
-        {(mine > 0 || status) && (
+        {(drafts > 0 || status) && (
           <div className="segmented small status-switch" role="group" aria-label="Status">
-            {[['', `All cards (${cards.length})`], [PUBLISHED, `Published (${published})`], [DRAFT, `My drafts (${mine})`]].map(([value, label]) => (
+            {[['', `All cards (${cards.length})`], [PUBLISHED, `Published (${published})`], [DRAFT, `Drafts, hidden from visitors (${drafts})`]].map(([value, label]) => (
               <button type="button" key={value} className={status === value ? 'selected' : ''} aria-pressed={status === value} onClick={() => chooseStatus(value)}>{label}</button>
             ))}
           </div>
@@ -213,7 +213,7 @@ export default function Library({ index, failure, params }: LibraryProps) {
       <div className="lib-head">
         <p className="muted" role="status">
           {shown.length !== cards.length ? `${shown.length} of ${cards.length} cards` : fresh ? `${published - fresh} cards from ATLAS and ${fresh} new cards` : `${published} published cards`}
-          {mine > 0 && shown.length === cards.length && ` and ${mine} draft${mine === 1 ? '' : 's'} of yours`}
+          {drafts > 0 && shown.length === cards.length && ` and ${drafts} draft${drafts === 1 ? '' : 's'} that visitors do not see`}
         </p>
         <div className="row">
           {mode === 'model' && view === 'list' && valued.length > 0 && (
@@ -227,7 +227,7 @@ export default function Library({ index, failure, params }: LibraryProps) {
           )}
           <label className="muted inline">
             Sort by{' '}
-            <select value={sort} onChange={(event) => setSort(event.target.value as SortKey)}>
+            <select value={sort} onChange={(event) => (setSort(event.target.value as SortKey), rememberSort(event.target.value as SortKey))}>
               {SORTS.map(({ key, label }) => <option key={key} value={key}>{label}</option>)}
             </select>
           </label>
@@ -350,7 +350,7 @@ function ListTable({ cards, mode, metric }: { cards: LibraryCard[]; mode: 'mixed
             <tr key={card.id}>
               <td className="name-cell">
                 <a href={`#/library/${card.id}`}>{card.title}</a>
-                {card.draft && <span className="draft-badge" title="You sent this card from the creator. Only you can see it, in this browser.">Draft</span>}
+                {card.draft && <span className="draft-badge" title="Draft: visitors do not see this card until an administrator publishes it">Draft</span>}
                 <NewBadge card={card} />
                 <ReviewedBadge card={card} />
                 {card.summary && <span className="muted line">{card.summary}</span>}
@@ -452,7 +452,7 @@ function Tile({ card }: { card: LibraryCard }) {
       <span className="tile-head">
         <span className="row badges">
           <TypeBadge type={card.type} />
-          {card.draft && <span className="draft-badge" title="You sent this card from the creator. Only you can see it, in this browser.">Draft</span>}
+          {card.draft && <span className="draft-badge" title="Draft: visitors do not see this card until an administrator publishes it">Draft</span>}
           <NewBadge card={card} />
           <ReviewedBadge card={card} />
         </span>

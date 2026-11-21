@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import secrets
 import threading
 import time
 import urllib.request
@@ -201,6 +202,21 @@ def _first_sentences(text: str, limit: int = 240) -> str:
 
 
 PAPER_FACTS = ("title", "journal", "year", "doi", "pmid", "pmcid", "citations")
+# Journals are named in full, so a paper counts under one name however a card abbreviates it.
+JOURNALS = {"sci data": "Scientific Data", "nat commun": "Nature Communications", "eur radiol": "European Radiology",
+            "npj digit med": "npj Digital Medicine", "insights imaging": "Insights into Imaging", "med image anal": "Medical Image Analysis",
+            "nat med": "Nature Medicine", "radiol artif intell": "Radiology: Artificial Intelligence", "nat mach intell": "Nature Machine Intelligence",
+            "lancet digit health": "The Lancet Digital Health", "invest radiol": "Investigative Radiology",
+            "proc aaai conf artif intell": "Proceedings of the AAAI Conference on Artificial Intelligence"}
+
+
+def journal_of(paper: dict[str, Any], references: list[Any]) -> str:
+    """The journal a card's paper appeared in: of the paper a new card was drafted from, else of the card's
+    first reference that names its source ("Radiology: Artificial Intelligence. 2023;5(2):e220132")."""
+    source = _text(paper.get("journal")) or next((_text(ref.get("Source")) for ref in references if isinstance(ref, dict) and _text(ref.get("Source"))), "")
+    name = re.split(r"[.;,]?\s+(?=(?:19|20)\d{2}\b)|\.\s+\d|\s+\[|\s+preprint\b", source, maxsplit=1)[0]
+    name = re.sub(r"^(?:19|20)\d{2}\s+", "", name).strip(" .;,")[:90]
+    return JOURNALS.get(name.lower(), name)
 
 
 def summarize(card_id: str, record: dict[str, Any]) -> dict[str, Any]:
@@ -260,6 +276,9 @@ def summarize(card_id: str, record: dict[str, Any]) -> dict[str, Any]:
         "has_atlas_description": bool(description),
         "origin": origin, "paper": paper if origin == "new" else None,
         "atlas_url": f"{ATLAS}/cards/{card_id}" if origin == "atlas" else "", "link": _text(body.get("Link")),
+        # A draft is hidden from visitors until an administrator publishes it. Only new cards can be drafts.
+        "draft": origin == "new" and record.get("status") == "draft", "submission": record.get("source") == "submission",
+        "journal": journal_of(paper, _list(descriptors.get("References"))),
         "modalities": modalities, "subspecialties": subspecialties, "content_codes": content,
         "tasks": tasks, "metrics": metrics, "population": population, "ages": ages,
         "year": int(year_match.group(1)) if year_match else None,
@@ -276,7 +295,11 @@ def summarize(card_id: str, record: dict[str, Any]) -> dict[str, Any]:
 _lock = threading.Lock()
 _records: dict[str, dict[str, Any]] = {}       # card id -> {"card", "title", "description"}: ATLAS's cards and the new ones
 _atlas: dict[str, dict[str, Any]] = {}         # ATLAS's cards only, as last read
-_new: dict[str, dict[str, Any]] = {}           # cards that are not on ATLAS: {"card", "title", "description", "origin": "new", "paper"}
+# Cards that are not on ATLAS: {"card", "title", "description", "origin": "new", "paper",
+#   "status": "published" | "draft" (absent = published), "source": "file" | "submission" (absent = file),
+#   "submitted": {"at", "name", "email"} for a card someone sent from the Creator page}
+_new: dict[str, dict[str, Any]] = {}
+MAX_WAITING = 200                              # submissions that can wait as drafts at one time
 _index: list[dict[str, Any]] = []
 _state: dict[str, Any] = {"synced_at": None, "last_error": None, "syncing": False}
 _store: Path | None = None
@@ -341,25 +364,97 @@ def add_new_cards(cards: list[dict[str, Any]]) -> dict[str, int]:
                              "origin": "new", "paper": _dict(entry.get("paper"))}
     with _lock:
         replaced = sum(1 for card_id in accepted if card_id in _new)
+        for card_id, record in accepted.items():     # a card added again keeps the status an administrator gave it
+            if _new.get(card_id, {}).get("status") == "draft":
+                record["status"] = "draft"
         _new.update(accepted)
     _save_new()
     _rebuild()
     return {"added": len(accepted) - replaced, "replaced": replaced, "total": new_card_count()}
 
 
+def _from_file(record: dict[str, Any]) -> bool:
+    return record.get("source") != "submission"
+
+
 def remove_new_cards() -> int:
-    """Take every new card out of the library again. Returns how many there were."""
+    """Take every new card that came from a file out of the library again (submissions stay).
+    Returns how many there were."""
     with _lock:
-        count = len(_new)
-        _new.clear()
+        gone = [card_id for card_id, record in _new.items() if _from_file(record)]
+        for card_id in gone:
+            del _new[card_id]
     _save_new()
     _rebuild()
-    return count
+    return len(gone)
 
 
 def new_card_count() -> int:
+    """How many new cards came from a file."""
     with _lock:
-        return len(_new)
+        return sum(1 for record in _new.values() if _from_file(record))
+
+
+def add_submission(card: dict[str, Any], *, description: str = "", name: str = "", email: str = "") -> str:
+    """Keep a card someone sent from the Creator page, as a draft only administrators see. Returns its id.
+    Raises ValueError, with a sentence to show, when it is not a card or too many are waiting."""
+    if not isinstance(card, dict) or not (isinstance(card.get("Dataset"), dict) or isinstance(card.get("Model"), dict)):
+        raise ValueError('A card has a "Dataset" or a "Model" section.')
+    body = card.get("Dataset") or card.get("Model")
+    with _lock:
+        waiting = sum(1 for record in _new.values() if not _from_file(record) and record.get("status") == "draft")
+        if waiting >= MAX_WAITING:
+            raise ValueError("Too many submitted cards are waiting to be looked at. Please try again in a few days.")
+        card_id = f"new-sub-{secrets.token_hex(6)}"
+        _new[card_id] = {"card": card, "title": _text(body.get("Name")), "description": description.strip(), "origin": "new", "paper": {},
+                         "status": "draft", "source": "submission",
+                         "submitted": {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                       "name": " ".join(name.split())[:200], "email": email.strip()[:320]}}
+    _save_new()
+    _rebuild()
+    return card_id
+
+
+def set_status(card_ids: list[str], status: str) -> int:
+    """Publish new cards or turn them back into drafts. ATLAS's own cards are always published and are
+    left alone. Returns how many cards changed."""
+    if status not in ("published", "draft"):
+        raise ValueError('A card is "published" or "draft".')
+    changed = 0
+    with _lock:
+        for card_id in card_ids:
+            record = _new.get(card_id)
+            if record is not None and (record.get("status") or "published") != status:
+                record["status"] = status
+                changed += 1
+    if changed:
+        _save_new()
+        _rebuild()
+    return changed
+
+
+def remove_cards(card_ids: list[str]) -> list[str]:
+    """Delete new cards (from a file or submitted). Returns the ids that were there."""
+    with _lock:
+        gone = [card_id for card_id in card_ids if _new.pop(card_id, None) is not None]
+    if gone:
+        _save_new()
+        _rebuild()
+    return gone
+
+
+def new_cards() -> list[dict[str, Any]]:
+    """Every new card as the administrator's lists show it, newest submission first, then by title."""
+    with _lock:
+        records = {card_id: dict(record) for card_id, record in _new.items()}
+        facts = {row["id"]: row for row in _index if row["id"] in records}
+    rows = [{"id": card_id, "title": (facts.get(card_id) or {}).get("title") or record.get("title") or card_id,
+             "type": "dataset" if "Dataset" in record["card"] else "model",
+             "status": record.get("status") or "published", "source": record.get("source") or "file",
+             "journal": _text(_dict(record.get("paper")).get("journal")), "year": (facts.get(card_id) or {}).get("year"),
+             "submitted": record.get("submitted")} for card_id, record in records.items()]
+    rows.sort(key=lambda row: (-(datetime.fromisoformat(row["submitted"]["at"]).timestamp() if row["submitted"] else 0), row["title"].lower()))
+    return rows
 
 
 def _save_new() -> None:
@@ -450,9 +545,16 @@ def start_background_sync(hours: float) -> None:
     threading.Thread(target=loop, name="atlas-library-sync", daemon=True).start()
 
 
-def library_index() -> dict[str, Any]:
+def library_index(drafts: bool = False) -> dict[str, Any]:
+    """The listing. Drafts are left out unless asked for (only administrators ask)."""
     with _lock:
-        return {"cards": list(_index), "count": len(_index), "source": ATLAS, **_state}
+        cards = [row for row in _index if drafts or not row["draft"]]
+        return {"cards": cards, "count": len(cards), "source": ATLAS, **_state}
+
+
+def is_draft(card_id: str) -> bool:
+    with _lock:
+        return _records.get(card_id, {}).get("status") == "draft"
 
 
 def library_card(card_id: str) -> dict[str, Any] | None:

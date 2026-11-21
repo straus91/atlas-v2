@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Admin from './Admin.tsx'
 import { CardPage } from './CardView.tsx'
 import Creator from './Creator.tsx'
-import { asDraft, readDrafts, writeDrafts } from './drafts.ts'
-import type { CardToOpen, ReceivedCard } from './host.ts'
+import type { CardToOpen } from './host.ts'
 import Library from './Library.tsx'
-import { describeCard, getHealth, getLibrary, setLocalRecords } from './library.ts'
-import type { Health, LibraryCard, LibraryIndex, LibraryRecord } from './library.ts'
+import { getHealth, getLibrary, readAsAdmin } from './library.ts'
+import type { Health, LibraryIndex } from './library.ts'
 import Overview from './Overview.tsx'
+import { getSession, signOut } from './review.ts'
+import type { Session } from './review.ts'
 import { go, useRoute } from './route.ts'
 import Validate from './Validate.tsx'
 
@@ -18,22 +19,28 @@ export default function App() {
   const [failure, setFailure] = useState<string | null>(null)
   const [creatorOpened, setCreatorOpened] = useState(false) // the frame is loaded on first visit, then kept
   const [toOpen, setToOpen] = useState<CardToOpen | null>(null)
-  // Cards sent from the creator; this browser only. Registered at once, so a draft's own page can be opened directly.
-  const [drafts, setDrafts] = useState<LibraryRecord[]>(() => {
-    const saved = readDrafts()
-    setLocalRecords(saved)
-    return saved
-  })
-  const [arrived, setArrived] = useState<{ id: string; name: string; description: string; cardType: string } | null>(null)
   const [wide, setWide] = useState(false) // an author is going through their card section by section
+  // Admin mode: a signed-in administrator also sees the drafts, and the pages that manage the cards.
+  const [session, setSession] = useState<Session | null>(null)
+  const admin = session?.signed_in ?? false
 
   useEffect(() => {
     getHealth().then(setHealth, () => setFailure('Cannot reach the server.'))
+    getSession().then(setSession, () => setSession({ configured: false, signed_in: false }))
   }, [])
+
+  const reload = useCallback(() => void getLibrary().then((index) => (setLibrary(index), setFailure(null)), () => undefined), [])
+
+  // The library is read once it is known who is looking: administrators get the drafts too.
+  useEffect(() => {
+    if (!session) return
+    readAsAdmin(session.signed_in)
+    setLibrary(null)
+  }, [session])
 
   // While the server is still reading the cards from ATLAS for the first time, ask again every few seconds.
   useEffect(() => {
-    if (library && (library.count > 0 || !library.syncing)) return
+    if (!session || (library && (library.count > 0 || !library.syncing))) return
     let current = true
     const load = () =>
       getLibrary().then(
@@ -45,49 +52,25 @@ export default function App() {
       current = false
       clearTimeout(timer)
     }
-  }, [library])
+  }, [library, session])
 
   useEffect(() => {
     if (route.page === 'creator') setCreatorOpened(true)
   }, [route.page])
-
-  // Drafts are looked up in this browser instead of on the server, and remembered between visits.
-  useEffect(() => {
-    setLocalRecords(drafts)
-    writeDrafts(drafts)
-  }, [drafts])
-
-  /** A card arrived from the creator: have the server describe it, then keep it as a draft here. */
-  const receive = useCallback(async (received: ReceivedCard) => {
-    const draft = asDraft(await describeCard(received.card, received.description))
-    setDrafts((current) => [draft, ...current])
-    setArrived({ id: draft.facts!.id, name: draft.facts!.title, description: received.description, cardType: received.cardType })
-  }, [])
-
-  const removeDraft = useCallback((id: string) => {
-    setDrafts((current) => current.filter((draft) => draft.facts?.id !== id))
-    setArrived((current) => (current?.id === id ? null : current))
-    go('#/library')
-  }, [])
 
   const edit = useCallback((card: CardToOpen) => {
     setToOpen(card)
     go('#/creator')
   }, [])
   const opened = useCallback(() => setToOpen(null), [])
-  /** The administrator gave or removed a mark: show it in Browse without a reload. */
-  const reload = useCallback(() => void getLibrary().then(setLibrary, () => undefined), [])
-  const dismiss = useCallback(() => setArrived(null), [])
-
-  // Browse shows the published cards plus this visitor's drafts; the Overview counts published cards only.
-  const browsing = useMemo<LibraryIndex | null>(() => {
-    if (!library) return null
-    const mine = drafts.map((draft) => draft.facts).filter((facts): facts is LibraryCard => facts !== null)
-    return mine.length ? { ...library, cards: [...mine, ...library.cards] } : library
-  }, [library, drafts])
+  const leave = () => {
+    const out = () => (setSession({ configured: true, signed_in: false }), go('#/library'))
+    signOut().then(out, out)
+  }
 
   const creator = health?.creator_url ? { url: health.creator_url, origin: health.creator_origin } : null
   const current = (page: string) => (route.page === page || (page === 'library' && route.page === 'card') ? 'current' : '')
+  const desk = (tab: string) => (route.page === 'admin' && route.id === tab ? 'current' : '')
 
   return (
     <div className={`page ${route.page === 'creator' || (route.page === 'validate' && wide) ? 'full' : ''}`}>
@@ -111,18 +94,28 @@ export default function App() {
           <a href="#/library" className={current('library')}>Browse</a>
           <a href="#/overview" className={current('overview')}>Overview</a>
           {creator && <a href="#/creator" className={current('creator')}>Creator</a>}
-          <a href="#/admin" className={`${current('admin')} aside`}>Admin</a>
+          {admin ? (
+            <span className="aside admin-nav">
+              <span className="admin-mode" title="You are signed in as administrator: you also see the drafts, which visitors do not">Admin mode</span>
+              <a href="#/admin" className={desk('')}>Author review</a>
+              <a href="#/admin/cards" className={desk('cards')}>Cards</a>
+              <a href="#/admin/submissions" className={desk('submissions')}>Submissions</a>
+              <button type="button" className="link" onClick={leave}>Sign out</button>
+            </span>
+          ) : (
+            <a href="#/admin" className={`${current('admin')} aside`}>Admin</a>
+          )}
         </nav>
       )}
 
-      {route.page === 'library' && <Library index={browsing} failure={failure} params={route.params} />}
-      {route.page === 'card' && <CardPage id={route.id} onEdit={creator ? edit : null} onRemoveDraft={removeDraft} />}
+      {route.page === 'library' && <Library index={library} failure={failure} params={route.params} />}
+      {route.page === 'card' && <CardPage id={route.id} onEdit={creator ? edit : null} admin={admin} onChanged={reload} />}
       {route.page === 'overview' && <Overview index={library} failure={failure} />}
-      {route.page === 'admin' && <Admin onMarksChanged={reload} />}
+      {route.page === 'admin' && <Admin session={session} onSession={setSession} tab={route.id} onChanged={reload} />}
       {route.page === 'validate' && <Validate token={route.id} creator={creator} onWide={setWide} />}
       {creator && creatorOpened && (
         <Creator url={creator.url} origin={creator.origin} hidden={route.page !== 'creator'} toOpen={toOpen} onOpened={opened}
-          arrived={arrived} onCard={receive} onDismiss={dismiss} />
+          admin={admin} onSent={reload} />
       )}
     </div>
   )
