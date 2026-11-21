@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  DRAFT, FILTERS, NOT_STATED, PUBLISHED, SORTS, day, downloadCard, isNew, filterCards, metricsWithValues, optionsFor, paramsToQuery, queryToParams, resultsFor, shortMetric, sizeParts, sortCards,
+  DRAFT, FILTERS, NEW, NOT_STATED, PUBLISHED, REVIEWED, SORTS, day, downloadCard, isNew, filterCards, metricsWithValues, optionsFor, paramsToQuery, queryToParams, resultsFor, shortMetric, sizeParts, sortCards,
 } from './library.ts'
 import type { Chosen, FilterKey, FilterSpec, LibraryCard, LibraryIndex, Option, Query, SortKey } from './library.ts'
 import { go } from './route.ts'
@@ -127,6 +127,9 @@ export default function Library({ index, failure, params }: LibraryProps) {
   const mine = cards.filter((card) => card.draft).length
   const published = cards.length - mine
   const fresh = cards.filter(isNew).length
+  const starred = cards.filter((card) => card.author_reviewed).length
+  const onlyNew = (query.chosen.origin ?? []).includes(NEW)
+  const onlyReviewed = (query.chosen.review ?? []).includes(REVIEWED)
   // Status has its own switch above the filters, so it is neither in "More" nor among the chips.
   const menus = FILTERS.filter((spec) => spec.key !== 'status')
   const active = menus.flatMap((spec) => (query.chosen[spec.key] ?? []).map((value) => ({ spec, value })))
@@ -181,6 +184,18 @@ export default function Library({ index, failure, params }: LibraryProps) {
               </div>
             ))}
           </FilterMenu>
+          {(fresh > 0 || onlyNew) && (
+            <button type="button" className={`mark-filter new ${onlyNew ? 'selected' : ''}`} aria-pressed={onlyNew} onClick={() => toggle('origin', NEW)}
+              title={onlyNew ? 'Showing only the new cards. Click to show all cards again.' : 'Show only the new cards: the ones that are not on ATLAS yet'}>
+              <span aria-hidden="true">✦</span> New
+            </button>
+          )}
+          {(starred > 0 || onlyReviewed) && (
+            <button type="button" className={`mark-filter reviewed ${onlyReviewed ? 'selected' : ''}`} aria-pressed={onlyReviewed} onClick={() => toggle('review', REVIEWED)}
+              title={onlyReviewed ? 'Showing only author-reviewed cards. Click to show all cards again.' : 'Show only the cards their authors have reviewed'}>
+              <span className="star" aria-hidden="true">★</span> Author-reviewed
+            </button>
+          )}
         </div>
         {(active.length > 0 || query.text.trim()) && (
           <div className="active-filters">

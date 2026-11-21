@@ -283,6 +283,13 @@ table.admin-table th:last-child { position: static; }
 .new-badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; background: var(--new-bg); color: var(--new-text); }
 .name-cell .new-badge { margin-left: 8px; }
 .stat .new-mark { color: var(--new-text); }
+/* The two marks as one-click filters in the Browse bar: pale until pressed, then outlined in their own colour. */
+.mark-filter { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 0.92rem; font-weight: 600; border-radius: 999px; white-space: nowrap; }
+.mark-filter.new { background: var(--new-bg); color: var(--new-text); border-color: transparent; }
+.mark-filter.reviewed { background: var(--gold-bg); color: var(--gold-text); border-color: var(--gold-line); }
+.mark-filter .star { color: var(--gold-star); }
+.mark-filter.selected { box-shadow: 0 0 0 2px currentColor; }
+.mark-filter.selected::after { content: '×'; font-weight: 400; margin-left: 2px; }
 .banner.new-note { background: var(--new-bg); color: var(--text); }
 .banner.new-note strong { color: var(--new-text); }
 
