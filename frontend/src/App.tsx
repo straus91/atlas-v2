@@ -94,7 +94,9 @@ export default function App() {
       <header>
         <div>
           <h1>
-            ATLAS <span className="version">V2 proposal</span>
+            <a className="home" href="#/library" title="Back to the start: every card, no filters">
+              ATLAS <span className="version">V2 proposal</span>
+            </a>
           </h1>
           <p className="muted">
             A proposal for how RSNA ATLAS could present its model and dataset cards. The cards are read from atlas.rsna.org
