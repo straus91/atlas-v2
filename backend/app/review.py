@@ -31,6 +31,7 @@ import json
 import re
 import secrets
 import smtplib
+import ssl
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -188,16 +189,17 @@ def send_email(mail: Mail, to: str, subject: str, body: str) -> None:
     if mail.reply_to:
         message["Reply-To"] = mail.reply_to
     message.set_content(body)
+    checked = ssl.create_default_context()      # the mail server must prove who it is before it is given the password
     try:
         if mail.port == 465:
-            server: smtplib.SMTP = smtplib.SMTP_SSL(mail.host, mail.port, timeout=30)
+            server: smtplib.SMTP = smtplib.SMTP_SSL(mail.host, mail.port, timeout=30, context=checked)
         else:
             server = smtplib.SMTP(mail.host, mail.port, timeout=30)
         with server:
             if mail.port != 465:
                 server.ehlo()
                 if server.has_extn("starttls"):
-                    server.starttls()
+                    server.starttls(context=checked)
                     server.ehlo()
                 elif mail.user:
                     raise ReviewError("the mail server does not offer a protected connection, so the password was not sent")
@@ -208,6 +210,10 @@ def send_email(mail: Mail, to: str, subject: str, body: str) -> None:
         raise ReviewError("the mail server rejected the user name or password") from None
     except smtplib.SMTPRecipientsRefused:
         raise ReviewError("the mail server refused this address") from None
+    except smtplib.SMTPSenderRefused:
+        raise ReviewError(f"the mail server does not accept {mail.sender} as the address to send from") from None
+    except ssl.SSLCertVerificationError:
+        raise ReviewError("the mail server could not prove who it is, so the password was not sent") from None
     except (smtplib.SMTPException, OSError) as error:
         raise ReviewError(f"the mail server could not be used ({type(error).__name__})") from None
 
@@ -315,7 +321,7 @@ class Reviews:
     # ---- messages
     def post(self, mail: Mail, *, to: str, subject: str, body: str, about: str, kind: str) -> tuple[bool, str]:
         """Send a message if that is possible, and keep it in the outbox either way.
-        Returns (was it sent, why not). `kind`: "request" (to a contact) or "notice" (to the administrator)."""
+        Returns (was it sent, why not). `kind`: "request" (to a contact), "notice" (to the administrator) or "test"."""
         sent, problem = False, ""
         if not to:
             problem = "no address is set for these notes"

@@ -83,7 +83,12 @@ ATLAS the same page would sit behind the author's sign-in.
 
 To send emails, give the SMTP settings of any mail provider in `.env` (`SMTP_HOST`, `SMTP_PORT`,
 `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`) and set `SITE_URL` to the site's public address. On the
-real ATLAS the same steps would use its own accounts and mail service.
+server the installer asks for them (the key is typed hidden); run it with `ASK_MAIL=1` to change
+them later. DigitalOcean blocks ports 25, 465 and 587 on its servers, so use the provider's other
+port, usually 2525 (Brevo's free plan, 300 emails a day, offers it). Once a mail account is set,
+"Send a test email" on the Admin page sends one message to an address you give and says in words
+why if it could not; do that before writing to anyone. On the real ATLAS the same steps would use
+its own accounts and mail service.
 
 The section-by-section check needs the card creator (`CREATOR_URL`), and the card creator must
 list this site in its `EMBED_ORIGINS`. On your own computer, with both sites in Docker, also set
@@ -98,9 +103,10 @@ journal, year, doi, pmid, pmcid, citations}}]}`; the harvest project makes it wi
 Adding the same file again replaces the same cards. "Remove all new cards" takes them out again.
 
 New cards are listed in Browse and counted in the Overview with ATLAS's cards. They always carry
-"New", can be filtered with More → Source, and their page says which paper they were drafted
+"New", can be filtered with More → Source or More → Journal, and their page says which paper they were drafted
 from and that nobody has checked them against it yet (until their author has reviewed them).
-They are kept in `new-cards.json` in the data volume.
+The Overview shows which journals they come from, each a link to its cards. They are kept in
+`new-cards.json` in the data volume.
 
 ## The card creator is a separate project
 

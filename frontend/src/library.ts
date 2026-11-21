@@ -147,7 +147,7 @@ export async function downloadCard(card: LibraryCard): Promise<void> {
 }
 
 // ------------------------------------------------------------------ filters
-export type FilterKey = 'type' | 'modality' | 'subspecialty' | 'task' | 'population' | 'year' | 'metric' | 'license' | 'size' | 'review' | 'origin' | 'status'
+export type FilterKey = 'type' | 'modality' | 'subspecialty' | 'task' | 'population' | 'year' | 'metric' | 'license' | 'size' | 'review' | 'origin' | 'journal' | 'status'
 
 export interface FilterSpec {
   key: FilterKey
@@ -186,7 +186,9 @@ export const FILTERS: FilterSpec[] = [
   { key: 'review', label: 'Author review', main: false, values: (card) => [card.author_reviewed ? REVIEWED : NOT_REVIEWED], order: [REVIEWED, NOT_REVIEWED] },
   // Only offered when the library holds cards that are not on ATLAS.
   { key: 'origin', label: 'Source', main: false, values: (card) => (card.draft ? [] : [isNew(card) ? NEW : ON_ATLAS]), order: [ON_ATLAS, NEW] },
-  // Only offered when the visitor has drafts (cards they sent from the creator).
+  // The journal of the paper a new card was drafted from. Only new cards have one.
+  { key: 'journal', label: 'Journal', main: false, values: (card) => (card.paper?.journal ? [card.paper.journal] : []) },
+  // Shown as a switch above the filters, not in a menu, and only when the visitor has drafts (cards they sent from the creator).
   { key: 'status', label: 'Status', main: false, values: (card) => [card.draft ? DRAFT : PUBLISHED], order: [DRAFT, PUBLISHED] },
 ]
 

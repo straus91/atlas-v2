@@ -93,6 +93,15 @@ export default function Overview({ index, failure }: { index: LibraryIndex | nul
         </section>
       </div>
 
+      {fresh > 0 && (
+        <section className="panel">
+          <h2>Where the new cards come from</h2>
+          <p className="muted">The journal of the paper each of the {fresh} new cards was drafted from. Click a journal to see its cards.</p>
+          <Bars rows={tally(cards.filter(isNew), (card) => (card.paper?.journal ? [card.paper.journal] : []))} tone="all"
+            link={(value) => libraryLink({ journal: [value] })} unit={['card', 'cards']} />
+        </section>
+      )}
+
       <div className="chart-pair">
         <section className="panel">
           <h2>What the models do</h2>
@@ -219,10 +228,12 @@ interface BarsProps {
   link: (value: string) => string
   unit: [string, string]
   label?: (value: string) => string
+  /** The bars' colour: orange for models (the default), neutral when the cards are of both kinds. */
+  tone?: 'model' | 'all'
 }
 
 /** Horizontal bars, most frequent first, the count at the tip. One series, so no legend. */
-function Bars({ rows, link, unit, label = (value) => value }: BarsProps) {
+function Bars({ rows, link, unit, label = (value) => value, tone = 'model' }: BarsProps) {
   const longest = Math.max(1, ...rows.map(([, count]) => count))
   if (!rows.length) return <p className="muted">No card states this.</p>
   return (
@@ -231,7 +242,7 @@ function Bars({ rows, link, unit, label = (value) => value }: BarsProps) {
         <li key={value}>
           <a href={link(value)} title={`${value}: ${plural(count, unit[0], unit[1])}`}>
             <span className="bar-label">{label(value)}</span>
-            <span className="bar-track"><span className="bar model" style={{ width: `calc((100% - 44px) * ${count / longest})` }} /><span className="bar-value">{count}</span></span>
+            <span className="bar-track"><span className={`bar ${tone}`} style={{ width: `calc((100% - 44px) * ${count / longest})` }} /><span className="bar-value">{count}</span></span>
           </a>
         </li>
       ))}

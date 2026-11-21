@@ -6,6 +6,7 @@
 #   1. Downloads (or updates) the code into /opt/atlas-v2.
 #   2. Creates its settings file (.env). No API key is needed: this site calls no AI service.
 #      If the Admin page has no password yet, asks for one (typed here, never shown).
+#      If no mail account is set, asks for one (optional; ASK_MAIL=1 asks again to change it).
 #   3. Builds and starts it in its own container. No port is opened on the server.
 #   4. Adds its address to the front-door Caddy by appending one block to the front file the
 #      card creator's installer created, and reloads Caddy without restarting it. The other
@@ -94,6 +95,72 @@ if [ -z "$(value ADMIN_PASSWORD)" ]; then
         unset CHOSEN AGAIN_PW
     else
         echo "    NOTE: no keyboard is attached, so no Admin password was asked for; the Admin page stays off."
+    fi
+fi
+
+# Emails to authors go out through a mail account (any provider's SMTP settings). The questions
+# are asked when none is set; ASK_MAIL=1 asks them again to change it. The key is typed where
+# nobody sees it and written only to the settings file on this server. Answers are read from
+# file descriptor 3 (the keyboard).
+ask()        { printf '    %s' "$1"; IFS= read -r -u 3 REPLY || REPLY=""; REPLY="$(printf '%s' "$REPLY" | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"; }
+ask_hidden() { printf '    %s' "$1"; IFS= read -r -s -u 3 REPLY || REPLY=""; printf '\n'; REPLY="$(printf '%s' "$REPLY" | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"; }
+is_address() { printf '%s' "$1" | grep -qE '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'; }
+reaches()    { timeout 8 bash -c "exec 9<>/dev/tcp/$1/$2" 2>/dev/null; }
+
+mail_questions() {
+    local host port user key from reply tries=0
+    again() { tries=$((tries + 1)); echo "    $1"; [ "$tries" -lt 8 ]; }      # false after too many wrong answers
+    gave_up() { echo "    No mail account was set. Run this installer again to try once more."; }
+
+    say "Emails to authors need a mail account (for example the free plan of Brevo)"
+    echo "    Have ready: the mail server's name, your login for it, and its key (or password)."
+    echo "    Press Enter at the first question to skip this. Without a mail account no email is sent:"
+    echo "    the Admin page shows each personal link for you to send yourself."
+    while true; do
+        ask "Mail server (Brevo: smtp-relay.brevo.com): "; host="$REPLY"
+        [ -n "$host" ] || { echo "    Skipped. Run this installer again when you have a mail account."; return 0; }
+        printf '%s' "$host" | grep -qE '^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' || { again "That is not the name of a server. Try again." || { gave_up; return 0; }; continue; }
+        ask "Port (press Enter for 2525): "; port="${REPLY:-2525}"
+        printf '%s' "$port" | grep -qE '^[0-9]{2,5}$' || { again "A port is a number, such as 2525. Try again." || { gave_up; return 0; }; continue; }
+        reaches "$host" "$port" && break
+        again "This server cannot reach $host on port $port. DigitalOcean blocks ports 25, 465 and 587; most mail services also answer on 2525. Try again." || { gave_up; return 0; }
+    done
+    echo "    $host answers on port $port."
+    while true; do
+        ask "Login (Brevo: the SMTP login, which ends in @smtp-brevo.com): "; user="$REPLY"
+        printf '%s' "$user" | grep -qE "^[^[:space:]'\"]+\$" && break
+        again "The login is needed, without spaces or quotation marks. Try again." || { gave_up; return 0; }
+    done
+    while true; do
+        ask_hidden "Key or password (Brevo: the SMTP key; nothing shows while you type or paste): "; key="$REPLY"
+        [ -n "$key" ] && ! printf '%s' "$key" | grep -q "'" && break
+        again "The key is needed, and it cannot contain the ' character. Try again." || { gave_up; return 0; }
+    done
+    while true; do
+        ask "Address the emails come from (one your mail account may send from): "; from="$REPLY"
+        is_address "$from" && break
+        again "That is not an email address. Try again." || { gave_up; return 0; }
+    done
+    while true; do
+        ask "Address replies should go to (press Enter for $from): "; reply="$REPLY"
+        [ -z "$reply" ] || is_address "$reply" && break
+        again "That is not an email address. Try again." || { gave_up; return 0; }
+    done
+    setting SMTP_HOST "$host"
+    setting SMTP_PORT "$port"
+    setting SMTP_USER "$user"
+    setting SMTP_PASSWORD "'$key'"       # in single quotes, so every character is kept as typed
+    setting MAIL_FROM "$from"
+    setting MAIL_REPLY_TO "$reply"
+    echo "    The mail account is saved. Once the site is up, send yourself a test email from the Admin page."
+}
+
+if [ -z "$(value SMTP_HOST)" ] || [ "${ASK_MAIL:-}" = 1 ]; then
+    if { exec 3< "${ANSWERS:-/dev/tty}"; } 2>/dev/null; then
+        mail_questions
+        exec 3<&-
+    else
+        echo "    NOTE: no keyboard is attached, so the mail account was not asked for; emails stay in the Admin outbox."
     fi
 fi
 
@@ -188,7 +255,12 @@ if [ "$CODE" = 200 ]; then
     echo "The library fills in by itself over the next minute or two (the cards are being read from ATLAS)."
     echo "To update it later:  cd $APP_DIR && git pull && docker compose up -d --build"
     [ -z "$(value ADMIN_PASSWORD)" ] || echo "Admin page: https://$HOST/#/admin (author review, the outbox, and adding new cards from a file)."
-    [ -n "$(value SMTP_HOST)" ] || echo "No mail server is set, so emails to authors are written to the Admin outbox instead of sent (see .env.example to set one)."
+    if [ -n "$(value SMTP_HOST)" ]; then
+        echo "Emails go out through $(value SMTP_HOST) from $(value MAIL_FROM). In Admin, use \"Send a test email\" before writing to anyone."
+        echo "To change the mail account, run this installer again with ASK_MAIL=1 in front of bash:  ... | ASK_MAIL=1 bash"
+    else
+        echo "No mail account is set, so emails to authors are written to the Admin outbox instead of sent. Run this installer again to set one."
+    fi
 else
     printf '\nThe site and Caddy are running, but https://%s answered "%s" instead of 200.\n' "$HOST" "$CODE"
     echo "Existing sites are unaffected. Often this is the certificate still being issued, or the DNS"

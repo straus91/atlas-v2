@@ -319,6 +319,27 @@ def admin_settings(change: ReviewSettings) -> dict[str, Any]:
     return reviews.settings()
 
 
+class TestEmail(BaseModel):
+    to: str = Field(max_length=320)
+
+
+@app.post("/api/admin/test-email", dependencies=[Depends(require_admin)])
+def admin_test_email(test: TestEmail, request: Request) -> dict[str, Any]:
+    """One message to an address the administrator gives, to see that the mail account works
+    before anyone else is written to. It is kept in the outbox like every other message."""
+    to = test.to.strip()
+    if not review.EMAIL.fullmatch(to):
+        raise HTTPException(400, f'"{to}" is not an email address.')
+    if not settings.mail.configured:
+        raise HTTPException(400, "No mail server is set up on this site, so there is nothing to test.")
+    site = settings.site_url or str(request.base_url).rstrip("/")
+    body = (f"This is a test from {site}.\n\nIf you are reading it, the site can send email. Requests to the contacts of cards, "
+            "and the notes to you when they answer, come from this same address.\n\nThere is nothing to do with this message.")
+    sent, problem = reviews.post(settings.mail, to=to, subject="Test email from ATLAS V2", body=body, about="", kind="test")
+    log.info("review: test email (sent: %s)", sent)
+    return {"sent": sent, "problem": problem, "outbox": reviews.outbox()}
+
+
 class Ask(BaseModel):
     id: str
     email: str = Field(max_length=320)

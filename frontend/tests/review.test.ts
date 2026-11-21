@@ -40,6 +40,13 @@ describe('new cards', () => {
     expect(filterCards(cards, { text: '', chosen: { origin: [NEW] } }).map((found) => found.title)).toEqual(['From a paper'])
   })
 
+  it('can be found by the journal of their paper', () => {
+    const papers = [...cards, card({ title: 'In Radiology', origin: 'new', paper: { journal: 'Radiology' } }), card({ title: 'In Sci Data', origin: 'new', paper: { journal: 'Sci Data' } })]
+    const journal = FILTERS.find((filter) => filter.key === 'journal')!
+    expect(optionsFor(papers, { text: '', chosen: {} }, journal).map((option) => option.value)).toEqual(['Radiology', 'Sci Data'])
+    expect(filterCards(papers, { text: '', chosen: { journal: ['Sci Data'] } }).map((found) => found.title)).toEqual(['In Sci Data'])
+  })
+
   it('are read from the file the harvest makes, and anything else is refused in words', () => {
     expect(readNewCards('{"cards": [{"id": "new-1-model", "card": {"Model": {}}}]}')).toHaveLength(1)
     expect(() => readNewCards('not json')).toThrow('not valid JSON')

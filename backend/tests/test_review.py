@@ -140,3 +140,23 @@ def test_the_admin_view_is_off_without_a_password_and_locks_after_wrong_guesses(
     assert client.get("/api/admin/session").json() == {"configured": False, "signed_in": False}
     assert client.post("/api/admin/login", json={"password": ""}).status_code == 503
     assert client.get("/api/admin/reviews").status_code == 503
+
+
+def test_a_test_email_goes_to_the_address_given_and_says_why_when_it_cannot(site, monkeypatch):
+    client, sent = site
+    assert client.post("/api/admin/test-email", json={"to": "me@example.org"}).status_code == 401
+    sign_in(client)
+    assert client.post("/api/admin/test-email", json={"to": "not an address"}).status_code == 400
+    answer = client.post("/api/admin/test-email", json={"to": " me@example.org "}).json()
+    assert answer["sent"] and answer["problem"] == ""
+    assert sent[-1]["to"] == "me@example.org" and "https://atlas.example.org" in sent[-1]["body"]
+    assert answer["outbox"][0]["kind"] == "test" and answer["outbox"][0]["sent"]
+
+    def refused(mail, to, subject, body):
+        raise review.ReviewError("the mail server rejected the user name or password")
+    monkeypatch.setattr(review, "send_email", refused)
+    answer = client.post("/api/admin/test-email", json={"to": "me@example.org"}).json()
+    assert not answer["sent"] and "rejected" in answer["problem"] and not answer["outbox"][0]["sent"]
+
+    monkeypatch.setattr(main, "settings", dataclasses.replace(main.settings, mail=review.Mail()))
+    assert client.post("/api/admin/test-email", json={"to": "me@example.org"}).status_code == 400   # nothing to test

@@ -54,7 +54,7 @@ export interface OutboxMessage {
   subject: string
   body: string
   about: string // the card
-  kind: 'request' | 'notice' // to a contact, or to the administrator
+  kind: 'request' | 'notice' | 'test' // to a contact, to the administrator, or a test of the mail account
   sent: boolean
   problem: string
 }
@@ -152,6 +152,8 @@ export const signOut = () => call<Session>('POST', '/api/admin/logout')
 export const getReviews = () => call<AdminData>('GET', '/api/admin/reviews')
 export const saveSettings = (change: Partial<Pick<ReviewSettings, 'emails_enabled' | 'subject' | 'body' | 'admin_email'>>) =>
   call<ReviewSettings>('PUT', '/api/admin/settings', change)
+/** One message to this address, to see that the mail account works. */
+export const sendTestEmail = (to: string) => call<{ sent: boolean; problem: string; outbox: OutboxMessage[] }>('POST', '/api/admin/test-email', { to })
 export const approve = (id: string) => call<{ review: Review }>('POST', `/api/admin/reviews/${encodeURIComponent(id)}/approve`)
 export const markByHand = (id: string, note: string) => call<{ review: Review }>('POST', `/api/admin/reviews/${encodeURIComponent(id)}/mark`, { note })
 export const clearReview = (id: string) => call<{ review: null }>('DELETE', `/api/admin/reviews/${encodeURIComponent(id)}`)

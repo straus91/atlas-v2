@@ -9,7 +9,7 @@ import { ReviewedBadge, TypeBadge } from './Library.tsx'
 import { day } from './library.ts'
 import {
   STAGES, SignedOut, addNewCards, addressFor, approve, ask, canAsk, clearReview, getReviews, getSession, isAddress, markByHand, nameFor, readNewCards, removeNewCards,
-  saveSettings, signIn, signOut, stageOf,
+  saveSettings, sendTestEmail, signIn, signOut, stageOf,
 } from './review.ts'
 import type { AdminData, AdminRow, OutboxMessage, ReviewSettings, Session, Stage } from './review.ts'
 import { Differences } from './Validate.tsx'
@@ -185,6 +185,9 @@ function Desk({ onSignedOut, onMarksChanged }: { onSignedOut: () => void; onMark
           </>
         )}
         <NoticeAddress settings={data.settings} mail={data.mail.configured} onSaved={(settings) => setData({ ...data, settings })} onFailed={failed} />
+        {data.mail.configured && (
+          <TestEmail sender={data.mail.sender} to={data.settings.admin_email} onSent={(outbox) => setData({ ...data, outbox })} onFailed={failed} />
+        )}
         <Outbox messages={data.outbox} />
       </section>
 
@@ -553,6 +556,50 @@ function NoticeAddress({ settings, mail, onSaved, onFailed }: MessageEditorProps
   )
 }
 
+interface TestEmailProps {
+  sender: string
+  to: string
+  onSent: (outbox: OutboxMessage[]) => void
+  onFailed: (error: Error) => void
+}
+
+/** One message to an address you give, to see that the mail account works before writing to anyone. */
+function TestEmail({ sender, to, onSent, onFailed }: TestEmailProps) {
+  const [address, setAddress] = useState(to)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
+  const send = () => {
+    const wanted = address.trim()
+    setBusy(true)
+    setNote(null)
+    sendTestEmail(wanted).then(
+      (result) => {
+        setBusy(false)
+        setNote(result.sent
+          ? { tone: 'ok', text: `Sent to ${wanted}. Look in the inbox, and in the spam folder if it is not there.` }
+          : { tone: 'bad', text: `Not sent: ${result.problem}.` })
+        onSent(result.outbox)
+      },
+      (error: Error) => {
+        setBusy(false)
+        if (error instanceof SignedOut) onFailed(error)
+        else setNote({ tone: 'bad', text: error.message })
+      },
+    )
+  }
+  return (
+    <div className="notice-address">
+      <label htmlFor="test-address">Send a test email</label>
+      <span className="row">
+        <input id="test-address" type="email" value={address} placeholder="you@example.org" onChange={(event) => (setAddress(event.target.value), setNote(null))} />
+        <button type="button" disabled={busy || !isAddress(address.trim())} onClick={send}>{busy ? 'Sending…' : 'Send test'}</button>
+      </span>
+      {note && <p className={`banner ${note.tone}`} role="status">{note.text}</p>}
+      <span className="muted block">One message from {sender} to this address, to see that it arrives before you write to anyone.</span>
+    </div>
+  )
+}
+
 /** Every message this site wrote, newest first, exactly as it was (or would have been) sent. */
 function Outbox({ messages }: { messages: OutboxMessage[] }) {
   if (!messages.length) return null
@@ -567,7 +614,7 @@ function Outbox({ messages }: { messages: OutboxMessage[] }) {
                 <span className={`pill ${message.sent ? 'ok' : 'warn'}`}>{message.sent ? 'Sent' : 'Not sent'}</span>{' '}
                 <strong>{message.subject}</strong>
                 <span className="muted block">
-                  {day(message.at)} · {message.kind === 'notice' ? 'to you' : 'to the contact'}{message.to ? ` (${message.to})` : ''}
+                  {day(message.at)} · {message.kind === 'notice' ? 'to you' : message.kind === 'test' ? 'test' : 'to the contact'}{message.to ? ` (${message.to})` : ''}
                   {!message.sent && message.problem ? ` · ${message.problem}` : ''}
                 </span>
               </summary>

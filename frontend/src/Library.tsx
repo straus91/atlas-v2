@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  FILTERS, NOT_STATED, SORTS, day, downloadCard, isNew, filterCards, metricsWithValues, optionsFor, paramsToQuery, queryToParams, resultsFor, shortMetric, sizeParts, sortCards,
+  DRAFT, FILTERS, NOT_STATED, PUBLISHED, SORTS, day, downloadCard, isNew, filterCards, metricsWithValues, optionsFor, paramsToQuery, queryToParams, resultsFor, shortMetric, sizeParts, sortCards,
 } from './library.ts'
 import type { Chosen, FilterKey, FilterSpec, LibraryCard, LibraryIndex, Option, Query, SortKey } from './library.ts'
 import { go } from './route.ts'
@@ -127,7 +127,11 @@ export default function Library({ index, failure, params }: LibraryProps) {
   const mine = cards.filter((card) => card.draft).length
   const published = cards.length - mine
   const fresh = cards.filter(isNew).length
-  const active = FILTERS.flatMap((spec) => (query.chosen[spec.key] ?? []).map((value) => ({ spec, value })))
+  // Status has its own switch above the filters, so it is neither in "More" nor among the chips.
+  const menus = FILTERS.filter((spec) => spec.key !== 'status')
+  const active = menus.flatMap((spec) => (query.chosen[spec.key] ?? []).map((value) => ({ spec, value })))
+  const status = query.chosen.status?.length === 1 ? query.chosen.status[0] : ''
+  const chooseStatus = (value: string) => update({ ...query, chosen: { ...query.chosen, status: value ? [value] : [] } })
   const types = query.chosen.type ?? []
   const mode = types.length === 1 ? (types[0] === 'Dataset' ? 'dataset' : 'model') : 'mixed'
   const valued = useMemo(() => {
@@ -136,7 +140,7 @@ export default function Library({ index, failure, params }: LibraryProps) {
     return shared.length ? shared : every
   }, [shown])
   const shownMetric = metric === null || (metric !== '' && !valued.some(([name]) => name === metric)) ? (valued[0]?.[0] ?? '') : metric
-  const more = FILTERS.filter((spec) => !spec.main)
+  const more = menus.filter((spec) => !spec.main)
   const moreCount = more.reduce((sum, spec) => sum + (query.chosen[spec.key]?.length ?? 0), 0)
 
   if (failure) return <p className="banner bad">{failure}</p>
@@ -155,8 +159,15 @@ export default function Library({ index, failure, params }: LibraryProps) {
       <div className="lib-bar" ref={bar}>
         <input type="search" className="lib-search" value={text} onChange={(event) => typed(event.target.value)}
           placeholder="Search names, authors, institutions, keywords" aria-label="Search the library" />
+        {(mine > 0 || status) && (
+          <div className="segmented small status-switch" role="group" aria-label="Status">
+            {[['', `All cards (${cards.length})`], [PUBLISHED, `Published (${published})`], [DRAFT, `My drafts (${mine})`]].map(([value, label]) => (
+              <button type="button" key={value} className={status === value ? 'selected' : ''} aria-pressed={status === value} onClick={() => chooseStatus(value)}>{label}</button>
+            ))}
+          </div>
+        )}
         <div className="filters">
-          {FILTERS.filter((spec) => spec.main).map((spec) => (
+          {menus.filter((spec) => spec.main).map((spec) => (
             <FilterMenu key={spec.key} label={spec.label} open={openMenu === spec.key} count={query.chosen[spec.key]?.length ?? 0}
               onOpen={(open) => setOpenMenu(open ? spec.key : null)}>
               <Options spec={spec} options={options.get(spec.key) ?? []} chosen={query.chosen} onToggle={toggle} />

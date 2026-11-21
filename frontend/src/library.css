@@ -42,6 +42,7 @@ label.inline select { width: auto; }
 .lib-bar { position: sticky; top: 0; z-index: 6; background: var(--bg); padding: 10px 0 8px; border-bottom: 1px solid var(--line); }
 .lib-search { font-size: 1.05rem; padding: 10px 12px; border-radius: 8px; }
 .filters { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.status-switch { margin-top: 8px; }
 .filter { position: relative; }
 .filter-button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; font-size: 0.92rem; }
 .filter-button.used { border-color: var(--accent); background: var(--accent-soft); }
