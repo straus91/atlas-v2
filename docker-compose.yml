@@ -13,6 +13,7 @@ services:
       - "${APP_PORT:-8001}:8000"
     environment:
       CREATOR_URL: ${CREATOR_URL:-https://card-creator.pedsrad.org}
+      CREATOR_API_URL: ${CREATOR_API_URL:-}
       LIBRARY_SYNC_HOURS: ${LIBRARY_SYNC_HOURS:-24}
       # Author review (all optional; see .env.example)
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
@@ -24,7 +25,7 @@ services:
       MAIL_FROM: ${MAIL_FROM:-}
       MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
     volumes:
-      - atlas-data:/data   # the copy of the cards read from ATLAS, and the author reviews; survives restarts
+      - atlas-data:/data   # the copy of the cards read from ATLAS, the new cards and the author reviews; survives restarts
 
 volumes:
   atlas-data:

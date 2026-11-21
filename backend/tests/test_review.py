@@ -79,7 +79,7 @@ def test_the_whole_review_from_request_to_the_public_mark(site):
     assert anyone.post(f"/api/admin/reviews/{card_id}/approve").status_code == 401
     assert client.post(f"/api/admin/reviews/{card_id}/approve").json()["review"]["status"] == "approved"
     marks = client.get("/api/library").json()["author_reviewed"]
-    assert list(marks) == [card_id] and len(marks[card_id]) == 10
+    assert list(marks) == [card_id] and marks[card_id] == main.reviews.get(card_id)["approved_at"]
     assert client.get(f"/api/library/{card_id}").json()["facts"]["author_reviewed"] == marks[card_id]
     assert client.get(f"/api/library/{IDS[1]}").json()["facts"]["author_reviewed"] is None
     assert anyone.post(f"/api/validate/{token}", json={"correct": True}).status_code == 400   # nothing to answer any more

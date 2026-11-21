@@ -8,6 +8,10 @@ or changes its pages, the last good copy stays in use. Nothing here is stored in
 For every card `summarize()` works out a small record (type, modality, subspecialty, task,
 size, year, ...) that the library page filters and the overview counts. Everything in it is
 taken from the card itself; nothing is guessed.
+
+Besides ATLAS's cards the library can hold "new" cards: cards that are not on ATLAS, added by
+an administrator as one file (for example cards drafted from published papers). They are kept
+in DATA_DIR, listed with the others and always marked as new, with the paper they came from.
 """
 from __future__ import annotations
 
@@ -196,8 +200,13 @@ def _first_sentences(text: str, limit: int = 240) -> str:
     return cut[:stop + 1] if stop > 80 else cut.rsplit(" ", 1)[0] + "…"
 
 
+PAPER_FACTS = ("title", "journal", "year", "doi", "pmid", "pmcid", "citations")
+
+
 def summarize(card_id: str, record: dict[str, Any]) -> dict[str, Any]:
     card = _dict(record.get("card"))
+    origin = "new" if record.get("origin") == "new" else "atlas"
+    paper = {key: str(value).strip() for key, value in _dict(record.get("paper")).items() if key in PAPER_FACTS and str(value).strip()}
     kind = "dataset" if "Dataset" in card else "model"
     body = _dict(card.get("Dataset" if kind == "dataset" else "Model"))
     descriptors, indexing, imaging = (_dict(body.get(key)) for key in ("Descriptors", "Indexing", "Imaging"))
@@ -244,12 +253,13 @@ def summarize(card_id: str, record: dict[str, Any]) -> dict[str, Any]:
     read = readings.results_for(_text(performance.get("Comments"))) if _text(performance.get("Comments")) else None
 
     haystack = " ".join([title, name, summary, *keywords, *authors, *organizations, *procedures,
-                         *modalities, *subspecialties, *tasks, *content,
+                         *modalities, *subspecialties, *tasks, *content, paper.get("title", ""), paper.get("journal", ""),
                          *[str(code) for code in _list(indexing.get("RadLex"))]]).lower()
     return {
         "id": card_id, "type": kind, "title": title, "name": name, "summary": summary,
         "has_atlas_description": bool(description),
-        "atlas_url": f"{ATLAS}/cards/{card_id}", "link": _text(body.get("Link")),
+        "origin": origin, "paper": paper if origin == "new" else None,
+        "atlas_url": f"{ATLAS}/cards/{card_id}" if origin == "atlas" else "", "link": _text(body.get("Link")),
         "modalities": modalities, "subspecialties": subspecialties, "content_codes": content,
         "tasks": tasks, "metrics": metrics, "population": population, "ages": ages,
         "year": int(year_match.group(1)) if year_match else None,
@@ -264,32 +274,103 @@ def summarize(card_id: str, record: dict[str, Any]) -> dict[str, Any]:
 
 # ------------------------------------------------------------------ the copy kept on the server
 _lock = threading.Lock()
-_records: dict[str, dict[str, Any]] = {}       # card id -> {"card", "title", "description"}
+_records: dict[str, dict[str, Any]] = {}       # card id -> {"card", "title", "description"}: ATLAS's cards and the new ones
+_atlas: dict[str, dict[str, Any]] = {}         # ATLAS's cards only, as last read
+_new: dict[str, dict[str, Any]] = {}           # cards that are not on ATLAS: {"card", "title", "description", "origin": "new", "paper"}
 _index: list[dict[str, Any]] = []
 _state: dict[str, Any] = {"synced_at": None, "last_error": None, "syncing": False}
 _store: Path | None = None
+_new_store: Path | None = None
+NEW_ID = re.compile(r"new-[A-Za-z0-9._-]{1,80}")
 
 
 def configure(data_dir: Path) -> None:
     """Where the copy lives. Loads the last saved copy, if there is one."""
-    global _store
+    global _store, _new_store
     _store = data_dir / "atlas-library" / "cards.json"
+    _new_store = data_dir / "new-cards.json"
     readings.configure(data_dir)
+    try:
+        added = json.loads(_new_store.read_text(encoding="utf-8"))["cards"]
+        with _lock:
+            _new.clear()
+            _new.update({card_id: record for card_id, record in added.items() if NEW_ID.fullmatch(card_id)})
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
     try:
         saved = json.loads(_store.read_text(encoding="utf-8"))
         _adopt(saved["records"], saved.get("synced_at"))
     except (OSError, ValueError, KeyError, TypeError):
-        pass
+        _rebuild()
 
 
-def _adopt(records: dict[str, dict[str, Any]], synced_at: str | None) -> None:
+def _rebuild() -> None:
+    """Work out the listing again from ATLAS's cards and the new ones."""
+    with _lock:
+        records = {**_atlas, **_new}
     index = [summarize(card_id, record) for card_id, record in records.items()]
     index.sort(key=lambda row: row["title"].lower())
     with _lock:
         _records.clear()
         _records.update(records)
         _index[:] = index
+
+
+def _adopt(records: dict[str, dict[str, Any]], synced_at: str | None) -> None:
+    with _lock:
+        _atlas.clear()
+        _atlas.update(records)
         _state["synced_at"] = synced_at
+    _rebuild()
+
+
+def add_new_cards(cards: list[dict[str, Any]]) -> dict[str, int]:
+    """Add cards that are not on ATLAS (a card already added under the same id is replaced).
+    Each: {"id": "new-...", "card": {...}, "title"?, "paper"?: {title, journal, year, doi, pmid, pmcid, citations}}.
+    Raises ValueError, with a sentence to show, when something in the file is not a card."""
+    accepted: dict[str, dict[str, Any]] = {}
+    for position, entry in enumerate(cards, start=1):
+        card = entry.get("card") if isinstance(entry, dict) else None
+        card_id = str(entry.get("id") or "") if isinstance(entry, dict) else ""
+        if not NEW_ID.fullmatch(card_id):
+            raise ValueError(f'Card {position} has no usable id (it must look like "new-12345-model").')
+        if not isinstance(card, dict) or not (isinstance(card.get("Dataset"), dict) or isinstance(card.get("Model"), dict)):
+            raise ValueError(f'Card {position} ({card_id}) has no "Dataset" or "Model" section.')
+        body = card.get("Dataset") or card.get("Model")
+        accepted[card_id] = {"card": card, "title": _text(entry.get("title")) or _text(body.get("Name")), "description": "",
+                             "origin": "new", "paper": _dict(entry.get("paper"))}
+    with _lock:
+        replaced = sum(1 for card_id in accepted if card_id in _new)
+        _new.update(accepted)
+    _save_new()
+    _rebuild()
+    return {"added": len(accepted) - replaced, "replaced": replaced, "total": new_card_count()}
+
+
+def remove_new_cards() -> int:
+    """Take every new card out of the library again. Returns how many there were."""
+    with _lock:
+        count = len(_new)
+        _new.clear()
+    _save_new()
+    _rebuild()
+    return count
+
+
+def new_card_count() -> int:
+    with _lock:
+        return len(_new)
+
+
+def _save_new() -> None:
+    if _new_store is None:
+        return
+    with _lock:
+        cards = dict(_new)
+    _new_store.parent.mkdir(parents=True, exist_ok=True)
+    temporary = _new_store.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"cards": cards}, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(_new_store)
 
 
 def refresh_library(fetch: Callable[[str], str] = _download, pause: float = 0.3) -> int:
@@ -316,7 +397,7 @@ def refresh_library(fetch: Callable[[str], str] = _download, pause: float = 0.3)
         with ThreadPoolExecutor(max_workers=3) as pool:
             results = list(pool.map(one, pages))
         with _lock:
-            previous = dict(_records)
+            previous = dict(_atlas)
         records: dict[str, dict[str, Any]] = {}
         missed = 0
         for card_id, record in results:
@@ -382,9 +463,12 @@ def library_card(card_id: str) -> dict[str, Any] | None:
 
 
 def reset_for_tests() -> None:
-    global _store
+    global _store, _new_store
     with _lock:
         _records.clear()
+        _atlas.clear()
+        _new.clear()
         _index.clear()
         _state.update(synced_at=None, last_error=None, syncing=False)
     _store = None
+    _new_store = None

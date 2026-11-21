@@ -30,8 +30,24 @@ export interface LibraryCard {
   search: string
   /** A card this visitor sent from the creator: kept in their browser, not part of the published library. */
   draft?: boolean
-  /** The day (YYYY-MM-DD) the card was marked as author-reviewed: its contact person confirmed it and an administrator gave the final OK. */
+  /** When the card was marked as author-reviewed: its contact person confirmed or corrected it and an administrator gave the final OK. */
   author_reviewed?: string | null
+  /** The card shown is its author's corrected version, not ATLAS's copy. */
+  author_edited?: boolean
+  /** 'new': the card is not on ATLAS; an administrator added it here (for example drafted from a paper). */
+  origin?: 'atlas' | 'new'
+  /** The paper a new card was drafted from. */
+  paper?: Paper | null
+}
+
+export interface Paper {
+  title?: string
+  journal?: string
+  year?: string
+  doi?: string
+  pmid?: string
+  pmcid?: string
+  citations?: string
 }
 
 export interface ReadResult {
@@ -131,7 +147,7 @@ export async function downloadCard(card: LibraryCard): Promise<void> {
 }
 
 // ------------------------------------------------------------------ filters
-export type FilterKey = 'type' | 'modality' | 'subspecialty' | 'task' | 'population' | 'year' | 'metric' | 'license' | 'size' | 'review' | 'status'
+export type FilterKey = 'type' | 'modality' | 'subspecialty' | 'task' | 'population' | 'year' | 'metric' | 'license' | 'size' | 'review' | 'origin' | 'status'
 
 export interface FilterSpec {
   key: FilterKey
@@ -149,6 +165,9 @@ export const PUBLISHED = 'Published'
 export const DRAFT = 'Draft (only in this browser)'
 export const REVIEWED = 'Author-reviewed'
 export const NOT_REVIEWED = 'Not author-reviewed'
+export const ON_ATLAS = 'On ATLAS'
+export const NEW = 'New (not on ATLAS yet)'
+export const isNew = (card: Pick<LibraryCard, 'origin'>) => card.origin === 'new'
 
 export const FILTERS: FilterSpec[] = [
   { key: 'type', label: 'Type', main: true, values: (card) => [card.type === 'dataset' ? 'Dataset' : 'Model'], order: ['Dataset', 'Model'] },
@@ -165,6 +184,8 @@ export const FILTERS: FilterSpec[] = [
   },
   // Only offered once at least one card carries the mark.
   { key: 'review', label: 'Author review', main: false, values: (card) => [card.author_reviewed ? REVIEWED : NOT_REVIEWED], order: [REVIEWED, NOT_REVIEWED] },
+  // Only offered when the library holds cards that are not on ATLAS.
+  { key: 'origin', label: 'Source', main: false, values: (card) => (card.draft ? [] : [isNew(card) ? NEW : ON_ATLAS]), order: [ON_ATLAS, NEW] },
   // Only offered when the visitor has drafts (cards they sent from the creator).
   { key: 'status', label: 'Status', main: false, values: (card) => [card.draft ? DRAFT : PUBLISHED], order: [DRAFT, PUBLISHED] },
 ]

@@ -1,8 +1,8 @@
 // Author review: which cards carry the mark, which contacts can be asked, and which address is used.
 import { describe, expect, it } from 'vitest'
-import { FILTERS, NOT_REVIEWED, NOT_STATED, REVIEWED, filterCards, optionsFor } from '../src/library.ts'
+import { FILTERS, NEW, NOT_REVIEWED, NOT_STATED, ON_ATLAS, REVIEWED, filterCards, optionsFor } from '../src/library.ts'
 import type { LibraryCard } from '../src/library.ts'
-import { addressFor, canAsk, isAddress, nameFor, stageOf } from '../src/review.ts'
+import { addressFor, canAsk, isAddress, nameFor, readNewCards, stageOf } from '../src/review.ts'
 import type { AdminRow, Review } from '../src/review.ts'
 import { parseRoute } from '../src/route.ts'
 
@@ -31,11 +31,30 @@ describe('the author-reviewed mark', () => {
   })
 })
 
+describe('new cards', () => {
+  const cards = [card({ title: 'On ATLAS', origin: 'atlas' }), card({ title: 'Older record' }), card({ title: 'From a paper', origin: 'new' }), card({ title: 'Mine', draft: true })]
+  const spec = FILTERS.find((filter) => filter.key === 'origin')!
+
+  it('can be told from the cards on ATLAS; the draft of a visitor is neither', () => {
+    expect(optionsFor(cards, { text: '', chosen: {} }, spec)).toEqual([{ value: ON_ATLAS, count: 2 }, { value: NEW, count: 1 }])
+    expect(filterCards(cards, { text: '', chosen: { origin: [NEW] } }).map((found) => found.title)).toEqual(['From a paper'])
+  })
+
+  it('are read from the file the harvest makes, and anything else is refused in words', () => {
+    expect(readNewCards('{"cards": [{"id": "new-1-model", "card": {"Model": {}}}]}')).toHaveLength(1)
+    expect(() => readNewCards('not json')).toThrow('not valid JSON')
+    expect(() => readNewCards('{"cards": []}')).toThrow('holds no cards')
+    expect(() => readNewCards('[1, 2]')).toThrow('holds no cards')
+  })
+})
+
 describe('where a review stands', () => {
   it('follows the steps, and a changed card needs asking again', () => {
     expect(stageOf(null)).toBe('none')
     expect(stageOf(review({ status: 'requested' }))).toBe('requested')
     expect(stageOf(review({ status: 'confirmed' }))).toBe('confirmed')
+    expect(stageOf(review({ status: 'edited' }))).toBe('edited')
+    expect(stageOf(review({ status: 'edited', changed: true }))).toBe('stale') // corrections to a card ATLAS has since changed
     expect(stageOf(review({ status: 'approved' }))).toBe('approved')
     expect(stageOf(review({ status: 'approved', changed: true }))).toBe('stale')
     expect(stageOf(review({ status: 'confirmed', changed: true }))).toBe('stale')
@@ -44,7 +63,7 @@ describe('where a review stands', () => {
 
   it('lets a contact be asked unless an answer waits for the final OK or the mark is given', () => {
     expect((['none', 'requested', 'changes', 'stale'] as const).every(canAsk)).toBe(true)
-    expect(canAsk('confirmed') || canAsk('approved')).toBe(false)
+    expect(canAsk('confirmed') || canAsk('edited') || canAsk('approved')).toBe(false)
   })
 
   it('uses the typed address first, then the one asked before, then the first contact of the card', () => {

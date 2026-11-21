@@ -17,6 +17,7 @@ def _env(name: str, default: str = "") -> str:
 class Settings:
     library_sync_hours: float     # how often the cards are re-read from ATLAS; 0 = never
     creator_url: str              # the card creator shown on the Creator page ("" = no Creator page)
+    creator_api_url: str          # where this server itself reaches the card creator, to re-check a corrected card
     data_dir: Path                # where the copy of the cards is kept
     static_dir: Path              # the built web pages
     admin_password: str           # opens the admin view; "" = the site has no admin view
@@ -31,6 +32,7 @@ def load_settings() -> Settings:
     return Settings(
         library_sync_hours=float(_env("LIBRARY_SYNC_HOURS", "24")),
         creator_url=_env("CREATOR_URL", "https://card-creator.pedsrad.org").rstrip("/"),
+        creator_api_url=(_env("CREATOR_API_URL") or _env("CREATOR_URL", "https://card-creator.pedsrad.org")).rstrip("/"),
         data_dir=Path(_env("DATA_DIR") or Path(tempfile.gettempdir()) / "atlas-v2"),
         static_dir=Path(_env("STATIC_DIR", "/app/static")),
         admin_password=_env("ADMIN_PASSWORD"),

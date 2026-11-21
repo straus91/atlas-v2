@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  FILTERS, NOT_STATED, SORTS, day, downloadCard, filterCards, metricsWithValues, optionsFor, paramsToQuery, queryToParams, resultsFor, shortMetric, sizeParts, sortCards,
+  FILTERS, NOT_STATED, SORTS, day, downloadCard, isNew, filterCards, metricsWithValues, optionsFor, paramsToQuery, queryToParams, resultsFor, shortMetric, sizeParts, sortCards,
 } from './library.ts'
 import type { Chosen, FilterKey, FilterSpec, LibraryCard, LibraryIndex, Option, Query, SortKey } from './library.ts'
 import { go } from './route.ts'
@@ -31,12 +31,29 @@ export function TypeBadge({ type }: { type: LibraryCard['type'] }) {
   return <span className={`type-badge ${type}`}>{type === 'dataset' ? 'Dataset' : 'Model'}</span>
 }
 
-/** The mark of a card whose contact person confirmed it. Shows nothing for other cards. */
-export function ReviewedBadge({ card }: { card: Pick<LibraryCard, 'author_reviewed'> }) {
+/** What the gold star says about a card, in a sentence. */
+export function reviewedNote(card: Pick<LibraryCard, 'author_reviewed' | 'author_edited'>): string {
+  return card.author_edited
+    ? `The contact person of this card corrected it and an administrator approved their version (${day(card.author_reviewed)}).`
+    : `The contact person of this card confirmed that it is correct (${day(card.author_reviewed)}).`
+}
+
+/** The gold star of a card whose contact person confirmed or corrected it. Shows nothing for other cards. */
+export function ReviewedBadge({ card }: { card: Pick<LibraryCard, 'author_reviewed' | 'author_edited'> }) {
   if (!card.author_reviewed) return null
   return (
-    <span className="reviewed-badge" title={`The contact person of this card confirmed that it is correct (${day(card.author_reviewed)}).`}>
-      <span aria-hidden="true">✓</span> Author-reviewed
+    <span className="reviewed-badge" title={reviewedNote(card)}>
+      <span className="star" aria-hidden="true">★</span> Author-reviewed
+    </span>
+  )
+}
+
+/** The mark of a card that is not on ATLAS yet. Shows nothing for ATLAS's own cards. */
+export function NewBadge({ card }: { card: Pick<LibraryCard, 'origin'> }) {
+  if (!isNew(card)) return null
+  return (
+    <span className="new-badge" title="New: this card is not on ATLAS yet. It was drafted from the published paper by the card creator.">
+      <span aria-hidden="true">✦</span> New
     </span>
   )
 }
@@ -109,6 +126,7 @@ export default function Library({ index, failure, params }: LibraryProps) {
 
   const mine = cards.filter((card) => card.draft).length
   const published = cards.length - mine
+  const fresh = cards.filter(isNew).length
   const active = FILTERS.flatMap((spec) => (query.chosen[spec.key] ?? []).map((value) => ({ spec, value })))
   const types = query.chosen.type ?? []
   const mode = types.length === 1 ? (types[0] === 'Dataset' ? 'dataset' : 'model') : 'mixed'
@@ -168,7 +186,7 @@ export default function Library({ index, failure, params }: LibraryProps) {
 
       <div className="lib-head">
         <p className="muted" role="status">
-          {shown.length === cards.length ? `${published} published cards` : `${shown.length} of ${cards.length} cards`}
+          {shown.length !== cards.length ? `${shown.length} of ${cards.length} cards` : fresh ? `${published - fresh} cards from ATLAS and ${fresh} new cards` : `${published} published cards`}
           {mine > 0 && shown.length === cards.length && ` and ${mine} draft${mine === 1 ? '' : 's'} of yours`}
         </p>
         <div className="row">
@@ -307,6 +325,7 @@ function ListTable({ cards, mode, metric }: { cards: LibraryCard[]; mode: 'mixed
               <td className="name-cell">
                 <a href={`#/library/${card.id}`}>{card.title}</a>
                 {card.draft && <span className="draft-badge" title="You sent this card from the creator. Only you can see it, in this browser.">Draft</span>}
+                <NewBadge card={card} />
                 <ReviewedBadge card={card} />
                 {card.summary && <span className="muted line">{card.summary}</span>}
               </td>
@@ -408,6 +427,7 @@ function Tile({ card }: { card: LibraryCard }) {
         <span className="row badges">
           <TypeBadge type={card.type} />
           {card.draft && <span className="draft-badge" title="You sent this card from the creator. Only you can see it, in this browser.">Draft</span>}
+          <NewBadge card={card} />
           <ReviewedBadge card={card} />
         </span>
         <strong>{card.title}</strong>

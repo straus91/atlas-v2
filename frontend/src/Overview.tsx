@@ -5,7 +5,7 @@
 // the coverage grid uses one blue ramp, light for few cards and dark for many.
 
 import { useMemo, useState } from 'react'
-import { NOT_STATED, libraryLink, shortMetric } from './library.ts'
+import { NEW, NOT_STATED, REVIEWED, isNew, libraryLink, shortMetric } from './library.ts'
 import type { Chosen, LibraryCard, LibraryIndex } from './library.ts'
 
 const NO_CARDS: LibraryCard[] = []
@@ -44,10 +44,22 @@ export default function Overview({ index, failure }: { index: LibraryIndex | nul
     return <p className="banner warn">{index.syncing ? 'The cards are being read from ATLAS for the first time. This takes a minute or two.' : 'The library is empty: the cards could not be read from ATLAS.'}</p>
 
   const years = cards.map((card) => card.year).filter((year): year is number => year !== null)
+  const reviewed = cards.filter((card) => card.author_reviewed).length
+  const fresh = cards.filter(isNew).length
+  // below one in a hundred a rounded share would read as "none"
+  const share = reviewed === 0 ? '0%' : reviewed / cards.length < 0.01 ? 'under 1%' : `${Math.round((reviewed / cards.length) * 100)}%`
   return (
     <div className="overview">
       <div className="stat-tiles">
-        <a className="stat" href={libraryLink()}><span className="muted">Published cards</span><strong>{cards.length}</strong></a>
+        <a className="stat" href={libraryLink()}><span className="muted">{fresh ? 'Cards' : 'Published cards'}</span><strong>{cards.length}</strong></a>
+        {fresh > 0 && (
+          <a className="stat" href={libraryLink({ origin: [NEW] })} title="Cards that are not on ATLAS yet, drafted from published papers">
+            <span className="muted"><span className="new-mark" aria-hidden="true">✦</span> New, not on ATLAS yet</span><strong>{fresh}</strong>
+          </a>
+        )}
+        <a className="stat" href={libraryLink({ review: [REVIEWED] })} title="Cards whose contact person confirmed or corrected them, with an administrator's final OK">
+          <span className="muted"><span className="star" aria-hidden="true">★</span> Author-reviewed · {reviewed} of {cards.length}</span><strong>{share}</strong>
+        </a>
         <a className="stat" href={libraryLink({ type: ['Dataset'] })}><span className="muted"><i className="swatch dataset" /> Datasets</span><strong>{datasets.length}</strong></a>
         <a className="stat" href={libraryLink({ type: ['Model'] })}><span className="muted"><i className="swatch model" /> Models</span><strong>{models.length}</strong></a>
         <div className="stat"><span className="muted">Publication years</span><strong>{years.length ? `${Math.min(...years)}–${Math.max(...years)}` : '–'}</strong></div>

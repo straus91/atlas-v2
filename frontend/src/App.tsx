@@ -25,6 +25,7 @@ export default function App() {
     return saved
   })
   const [arrived, setArrived] = useState<{ id: string; name: string; description: string; cardType: string } | null>(null)
+  const [wide, setWide] = useState(false) // an author is going through their card section by section
 
   useEffect(() => {
     getHealth().then(setHealth, () => setFailure('Cannot reach the server.'))
@@ -89,15 +90,16 @@ export default function App() {
   const current = (page: string) => (route.page === page || (page === 'library' && route.page === 'card') ? 'current' : '')
 
   return (
-    <div className={`page ${route.page === 'creator' ? 'full' : ''}`}>
+    <div className={`page ${route.page === 'creator' || (route.page === 'validate' && wide) ? 'full' : ''}`}>
       <header>
         <div>
           <h1>
             ATLAS <span className="version">V2 proposal</span>
           </h1>
           <p className="muted">
-            A proposal for how RSNA ATLAS could present its model and dataset cards. The cards are read from atlas.rsna.org; this is not the
-            official ATLAS site.
+            A proposal for how RSNA ATLAS could present its model and dataset cards. The cards are read from atlas.rsna.org
+            {library?.cards.some((card) => card.origin === 'new') && ', plus new cards drafted from published papers and marked as new'}; this is
+            not the official ATLAS site.
           </p>
         </div>
       </header>
@@ -115,7 +117,7 @@ export default function App() {
       {route.page === 'card' && <CardPage id={route.id} onEdit={creator ? edit : null} onRemoveDraft={removeDraft} />}
       {route.page === 'overview' && <Overview index={library} failure={failure} />}
       {route.page === 'admin' && <Admin onMarksChanged={reload} />}
-      {route.page === 'validate' && <Validate token={route.id} />}
+      {route.page === 'validate' && <Validate token={route.id} creator={creator} onWide={setWide} />}
       {creator && creatorOpened && (
         <Creator url={creator.url} origin={creator.origin} hidden={route.page !== 'creator'} toOpen={toOpen} onOpened={opened}
           arrived={arrived} onCard={receive} onDismiss={dismiss} />

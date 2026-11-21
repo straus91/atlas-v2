@@ -1,6 +1,8 @@
 // Author review: what the admin page and the contact person's page ask the server, and the
-// small decisions both share. A review goes requested -> confirmed or changes -> approved;
-// only an approved review of the card as it is now shows the "Author-reviewed" mark.
+// small decisions both share. A review goes requested -> confirmed, edited or changes -> approved;
+// only an approved review of the card as ATLAS still has it shows the "Author-reviewed" mark.
+// "edited": the contact corrected the card themselves, in the card creator; the final OK then
+// also makes their version the card this site shows.
 
 import type { LibraryRecord } from './library.ts'
 
@@ -10,8 +12,15 @@ export interface Contact {
   source: string // where in the card the address was found
 }
 
+/** One fact that differs between the published card and the contact's version. */
+export interface Difference {
+  where: string // "Descriptors › License › Text"
+  before: string
+  after: string
+}
+
 export interface Review {
-  status: 'requested' | 'confirmed' | 'changes' | 'approved'
+  status: 'requested' | 'confirmed' | 'edited' | 'changes' | 'approved'
   email?: string
   name?: string
   link?: string // the personal link, for sending by hand
@@ -28,8 +37,28 @@ export interface Review {
   by_hand?: boolean
   note?: string
   history?: { at: string; what: string }[]
+  /** "quick": the one-click yes; "sections": the contact went through the card section by section. */
+  how?: 'quick' | 'sections' | ''
+  /** Sections the contact marked as not right without correcting them. */
+  flagged?: string[]
+  /** What the contact changed in the card, when they sent a corrected one. */
+  differences?: Difference[]
+  /** The contact has started on the card but has not answered yet. */
+  working?: boolean
   /** The card is no longer the one that was reviewed. */
   changed: boolean
+}
+
+/** A message this site wrote, sent or not. */
+export interface OutboxMessage {
+  at: string
+  to: string
+  subject: string
+  body: string
+  about: string // the card
+  kind: 'request' | 'notice' // to a contact, or to the administrator
+  sent: boolean
+  problem: string
 }
 
 export interface AdminRow {
@@ -46,6 +75,8 @@ export interface ReviewSettings {
   body: string
   standard_subject: string
   standard_body: string
+  /** Where a note goes when a contact answers; empty = nowhere (the note is still in the outbox). */
+  admin_email: string
 }
 
 export interface AdminData {
@@ -53,6 +84,8 @@ export interface AdminData {
   settings: ReviewSettings
   link_days: number
   mail: { configured: boolean; sender: string }
+  outbox: OutboxMessage[] // newest first
+  new_cards: number // cards that are not on ATLAS, added from a file
 }
 
 export interface Session {
@@ -75,6 +108,26 @@ export interface Validation {
   comment: string
   answered_at: string | null
   until: string | null
+  how: string
+  flagged: string[]
+  /** The contact's own version of the card so far, kept on the server. */
+  draft: Draft | null
+}
+
+export interface Draft {
+  card: Record<string, unknown>
+  flagged: string[]
+  saved_at: string | null
+  differences: Difference[]
+}
+
+export interface Answer {
+  correct: boolean
+  name: string
+  comment: string
+  how?: 'quick' | 'sections'
+  card?: Record<string, unknown>
+  flagged?: string[]
 }
 
 export class SignedOut extends Error {}
@@ -102,7 +155,7 @@ export const getSession = () => call<Session>('GET', '/api/admin/session')
 export const signIn = (password: string) => call<Session>('POST', '/api/admin/login', { password })
 export const signOut = () => call<Session>('POST', '/api/admin/logout')
 export const getReviews = () => call<AdminData>('GET', '/api/admin/reviews')
-export const saveSettings = (change: Partial<Pick<ReviewSettings, 'emails_enabled' | 'subject' | 'body'>>) =>
+export const saveSettings = (change: Partial<Pick<ReviewSettings, 'emails_enabled' | 'subject' | 'body' | 'admin_email'>>) =>
   call<ReviewSettings>('PUT', '/api/admin/settings', change)
 export const approve = (id: string) => call<{ review: Review }>('POST', `/api/admin/reviews/${encodeURIComponent(id)}/approve`)
 export const markByHand = (id: string, note: string) => call<{ review: Review }>('POST', `/api/admin/reviews/${encodeURIComponent(id)}/mark`, { note })
@@ -121,30 +174,53 @@ export async function ask(cards: { id: string; email: string; name: string }[]):
 }
 
 export const getValidation = (token: string) => call<Validation>('GET', `/api/validate/${encodeURIComponent(token)}`)
-export const sendAnswer = (token: string, answer: { correct: boolean; name: string; comment: string }) =>
-  call<Validation>('POST', `/api/validate/${encodeURIComponent(token)}`, answer)
+export const sendAnswer = (token: string, answer: Answer) => call<Validation>('POST', `/api/validate/${encodeURIComponent(token)}`, answer)
+export const saveDraft = (token: string, card: Record<string, unknown>, flagged: string[]) =>
+  call<Draft>('PUT', `/api/validate/${encodeURIComponent(token)}/draft`, { card, flagged })
+
+export interface NewCardCounts {
+  added: number
+  replaced: number
+  total: number
+}
+export const addNewCards = (cards: unknown[]) => call<NewCardCounts>('POST', '/api/admin/new-cards', { cards })
+export const removeNewCards = () => call<{ removed: number }>('DELETE', '/api/admin/new-cards')
+
+/** The cards in a file made for this site: {"cards": [{id, card, paper}, ...]}. Throws a sentence to show when it is something else. */
+export function readNewCards(text: string): unknown[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw new Error('That file is not valid JSON.')
+  }
+  const cards = (parsed as { cards?: unknown } | null)?.cards
+  if (!Array.isArray(cards) || !cards.length) throw new Error('That file holds no cards. It should be the "new-cards.json" file the harvest makes.')
+  return cards
+}
 
 // ------------------------------------------------------------------ where a review stands
-export type Stage = 'none' | 'requested' | 'confirmed' | 'changes' | 'approved' | 'stale'
+export type Stage = 'none' | 'requested' | 'confirmed' | 'edited' | 'changes' | 'approved' | 'stale'
 
 export const STAGES: { stage: Stage; label: string }[] = [
   { stage: 'none', label: 'Not asked' },
   { stage: 'requested', label: 'Waiting for the contact' },
-  { stage: 'confirmed', label: 'Waiting for your final OK' },
+  { stage: 'confirmed', label: 'Confirmed, waiting for your final OK' },
+  { stage: 'edited', label: 'Corrected by the contact, waiting for your final OK' },
   { stage: 'changes', label: 'Contact asks for changes' },
   { stage: 'approved', label: 'Author-reviewed' },
   { stage: 'stale', label: 'Card changed since its review' },
 ]
 
-/** A confirmed or approved review of an older version of the card counts for nothing until the contact is asked again. */
+/** A confirmed, corrected or approved review of an older version of the card counts for nothing until the contact is asked again. */
 export function stageOf(review: Review | null): Stage {
   if (!review) return 'none'
-  if (review.changed && (review.status === 'approved' || review.status === 'confirmed')) return 'stale'
+  if (review.changed && (review.status === 'approved' || review.status === 'confirmed' || review.status === 'edited')) return 'stale'
   return review.status
 }
 
 /** Cards whose contact can be asked (again). Not while an answer waits for the final OK, and not once the mark is given. */
-export const canAsk = (stage: Stage) => stage !== 'confirmed' && stage !== 'approved'
+export const canAsk = (stage: Stage) => stage !== 'confirmed' && stage !== 'edited' && stage !== 'approved'
 
 const ADDRESS = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/
 export const isAddress = (text: string) => ADDRESS.test(text.trim())

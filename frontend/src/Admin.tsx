@@ -3,14 +3,16 @@
 // their card through a personal link; the card shows "Author-reviewed" once the contact has
 // said it is correct and the administrator has given the final OK.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ChangeEvent, FormEvent, ReactNode } from 'react'
 import { ReviewedBadge, TypeBadge } from './Library.tsx'
 import { day } from './library.ts'
 import {
-  STAGES, SignedOut, addressFor, approve, ask, canAsk, clearReview, getReviews, getSession, isAddress, markByHand, nameFor, saveSettings, signIn, signOut, stageOf,
+  STAGES, SignedOut, addNewCards, addressFor, approve, ask, canAsk, clearReview, getReviews, getSession, isAddress, markByHand, nameFor, readNewCards, removeNewCards,
+  saveSettings, signIn, signOut, stageOf,
 } from './review.ts'
-import type { AdminData, AdminRow, ReviewSettings, Session, Stage } from './review.ts'
+import type { AdminData, AdminRow, OutboxMessage, ReviewSettings, Session, Stage } from './review.ts'
+import { Differences } from './Validate.tsx'
 
 export default function Admin({ onMarksChanged }: { onMarksChanged: () => void }) {
   const [session, setSession] = useState<Session | null>(null)
@@ -155,11 +157,13 @@ function Desk({ onSignedOut, onMarksChanged }: { onSignedOut: () => void; onMark
           <button type="button" className="link" onClick={() => signOut().then(onSignedOut, onSignedOut)}>Sign out</button>
         </div>
         <p>
-          A card shows <span className="reviewed-badge"><span aria-hidden="true">✓</span> Author-reviewed</span> when its contact person has said that the card is correct
-          and you have given the final OK. If the card changes afterwards, the mark is hidden until the card is reviewed again.
+          A card shows <span className="reviewed-badge"><span className="star" aria-hidden="true">★</span> Author-reviewed</span> when its contact person has
+          said that the card is correct, or has corrected it, and you have given the final OK. Cards are published either way; the star is
+          extra. If ATLAS changes the card afterwards, the star is hidden until the card is reviewed again.
         </p>
         <p className="review-counts">
-          <strong>{total('approved')}</strong> author-reviewed · <strong>{total('confirmed')}</strong> waiting for your final OK ·{' '}
+          <strong>{total('approved')}</strong> author-reviewed · <strong>{total('confirmed') + total('edited')}</strong> waiting for your final OK
+          {total('edited') > 0 && <> ({total('edited')} corrected by the contact)</>} ·{' '}
           <strong>{total('requested')}</strong> waiting for the contact · <strong>{total('changes')}</strong> with changes asked
           {total('stale') > 0 && <> · <strong>{total('stale')}</strong> changed since their review</>}
         </p>
@@ -180,7 +184,11 @@ function Desk({ onSignedOut, onMarksChanged }: { onSignedOut: () => void; onMark
             <MessageEditor settings={data.settings} onSaved={(settings) => setData({ ...data, settings })} onFailed={failed} />
           </>
         )}
+        <NoticeAddress settings={data.settings} mail={data.mail.configured} onSaved={(settings) => setData({ ...data, settings })} onFailed={failed} />
+        <Outbox messages={data.outbox} />
       </section>
+
+      <NewCards count={data.new_cards} onChanged={changed} onFailed={failed} />
 
       {failure && <p className="banner bad" role="alert">{failure}</p>}
       {outcome && (
@@ -399,7 +407,13 @@ function Row({ row, emails, address, askable, checked, onCheck, onType, onChange
         {stage === 'confirmed' && (
           <button type="button" className="primary" disabled={busy} onClick={() => run(approve(row.id))}>Give the final OK</button>
         )}
-        {stage !== 'approved' && stage !== 'confirmed' && !marking && (
+        {stage === 'edited' && (
+          <button type="button" className="primary" disabled={busy} onClick={() => run(approve(row.id))}
+            title="Checks the contact's version against the ATLAS schema once more, then shows it on this site in place of the old card">
+            {busy ? 'Checking…' : 'Approve and publish their version'}
+          </button>
+        )}
+        {stage !== 'approved' && stage !== 'confirmed' && stage !== 'edited' && !marking && (
           <button type="button" className="link" onClick={() => setMarking(true)} title="For a card its author wrote, or confirmed to you another way">
             Mark as reviewed by hand
           </button>
@@ -416,7 +430,8 @@ function Row({ row, emails, address, askable, checked, onCheck, onType, onChange
         )}
         {review && !removing && (
           <button type="button" className="link" onClick={() => setRemoving(true)}>
-            {stage === 'approved' ? 'Remove the mark' : stage === 'requested' ? 'Withdraw the request' : 'Forget this review'}
+            {stage === 'approved' ? (review.differences?.length ? 'Remove the mark and their version' : 'Remove the mark')
+              : stage === 'requested' ? 'Withdraw the request' : stage === 'edited' ? 'Set their version aside' : 'Forget this review'}
           </button>
         )}
         {removing && (
@@ -444,6 +459,7 @@ function Standing({ row, stage }: { row: AdminRow; stage: Stage }): ReactNode {
           <span className="muted line">
             Asked on {day(review.requested_at)}. {review.email_sent ? `Email sent to ${review.email}.` : `No email was sent (${review.email_problem}).`}{' '}
             The link works until {day(review.expires_at)}.
+            {review.working && ' The contact has opened the card and started correcting it.'}
           </span>
           <CopyLine review={review} />
         </>
@@ -451,7 +467,19 @@ function Standing({ row, stage }: { row: AdminRow; stage: Stage }): ReactNode {
       {stage === 'confirmed' && (
         <>
           <strong className="good">The contact says the card is correct</strong>
-          <span className="muted line">{who}. Waiting for your final OK.</span>
+          <span className="muted line">
+            {who}. {review.how === 'quick' ? 'Answered with the quick button, without going through the sections.' : 'Went through the card section by section.'}{' '}
+            Waiting for your final OK.
+          </span>
+          {review.comment && <span className="quote">{review.comment}</span>}
+        </>
+      )}
+      {stage === 'edited' && (
+        <>
+          <strong className="good">The contact sent a corrected card ({review.differences?.length ?? 0} change{review.differences?.length === 1 ? '' : 's'})</strong>
+          <span className="muted line">{who}. Nothing is published until your final OK.</span>
+          <Differences rows={review.differences ?? []} />
+          {review.flagged && review.flagged.length > 0 && <span className="attention line">Marked as not right, without a correction: {review.flagged.join(', ')}.</span>}
           {review.comment && <span className="quote">{review.comment}</span>}
         </>
       )}
@@ -459,16 +487,25 @@ function Standing({ row, stage }: { row: AdminRow; stage: Stage }): ReactNode {
         <>
           <strong className="attention">The contact asks for changes</strong>
           <span className="muted line">{who}</span>
+          {review.flagged && review.flagged.length > 0 && <span className="attention line">Marked as not right: {review.flagged.join(', ')}.</span>}
           <span className="quote">{review.comment}</span>
-          <span className="muted line">Correct the card on ATLAS, then ask the contact again.</span>
+          <span className="muted line">Correct the card, then ask the contact again.</span>
         </>
       )}
       {stage === 'approved' && (
         <>
-          <ReviewedBadge card={{ author_reviewed: review.approved_at?.slice(0, 10) }} />
+          <ReviewedBadge card={{ author_reviewed: review.approved_at, author_edited: Boolean(review.differences?.length) }} />
           <span className="muted line">
-            {review.by_hand ? `Marked by hand on ${day(review.approved_at)}: ${review.note}` : `Confirmed by ${who}; final OK on ${day(review.approved_at)}.`}
+            {review.by_hand ? `Marked by hand on ${day(review.approved_at)}: ${review.note}`
+              : review.differences?.length ? `Corrected by ${who}; final OK on ${day(review.approved_at)}. This site shows their version.`
+                : `Confirmed by ${who}; final OK on ${day(review.approved_at)}.`}
           </span>
+          {review.differences && review.differences.length > 0 && (
+            <details className="history">
+              <summary>What they changed ({review.differences.length})</summary>
+              <Differences rows={review.differences} />
+            </details>
+          )}
         </>
       )}
       {stage === 'stale' && (
@@ -486,6 +523,119 @@ function Standing({ row, stage }: { row: AdminRow; stage: Stage }): ReactNode {
         </details>
       )}
     </>
+  )
+}
+
+/** Where the note goes when a contact answers. */
+function NoticeAddress({ settings, mail, onSaved, onFailed }: MessageEditorProps & { mail: boolean }) {
+  const [address, setAddress] = useState(settings.admin_email)
+  const [note, setNote] = useState<string | null>(null)
+  const save = () => {
+    if (address.trim() && !isAddress(address)) {
+      setNote('That is not an email address.')
+      return
+    }
+    saveSettings({ admin_email: address.trim() }).then((saved) => {
+      onSaved(saved)
+      setNote('Saved.')
+    }, onFailed)
+  }
+  return (
+    <div className="notice-address">
+      <label htmlFor="notice-address">Tell me when a contact answers</label>
+      <span className="row">
+        <input id="notice-address" type="email" value={address} placeholder="you@example.org" onChange={(event) => (setAddress(event.target.value), setNote(null))} />
+        <button type="button" disabled={address.trim() === settings.admin_email} onClick={save}>Save</button>
+        {note && <span className={note === 'Saved.' ? 'muted' : 'attention'} role="status">{note}</span>}
+      </span>
+      <span className="muted block">
+        {mail ? 'A note is sent to this address each time a contact confirms or corrects a card.' : 'No mail server is set up, so the note is not sent; it is written to the outbox below instead.'}
+      </span>
+    </div>
+  )
+}
+
+/** Every message this site wrote, newest first, exactly as it was (or would have been) sent. */
+function Outbox({ messages }: { messages: OutboxMessage[] }) {
+  if (!messages.length) return null
+  return (
+    <details className="message-editor outbox">
+      <summary>Outbox ({messages.length} latest message{messages.length === 1 ? '' : 's'})</summary>
+      <ul>
+        {messages.map((message) => (
+          <li key={message.at + message.to + message.subject}>
+            <details>
+              <summary>
+                <span className={`pill ${message.sent ? 'ok' : 'warn'}`}>{message.sent ? 'Sent' : 'Not sent'}</span>{' '}
+                <strong>{message.subject}</strong>
+                <span className="muted block">
+                  {day(message.at)} · {message.kind === 'notice' ? 'to you' : 'to the contact'}{message.to ? ` (${message.to})` : ''}
+                  {!message.sent && message.problem ? ` · ${message.problem}` : ''}
+                </span>
+              </summary>
+              <pre>{message.body}</pre>
+            </details>
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+/** Cards that are not on ATLAS, added from one file (for example the cards drafted from papers). */
+function NewCards({ count, onChanged, onFailed }: { count: number; onChanged: () => void; onFailed: (error: Error) => void }) {
+  const input = useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
+  const [removing, setRemoving] = useState(false)
+  const failed = (error: Error) => {
+    setBusy(false)
+    if (error instanceof SignedOut) onFailed(error)
+    else setNote({ tone: 'bad', text: error.message })
+  }
+  const picked = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setBusy(true)
+    setNote(null)
+    file.text().then(readNewCards).then(addNewCards).then((counts) => {
+      setBusy(false)
+      setNote({ tone: 'ok', text: `${counts.added} card${counts.added === 1 ? '' : 's'} added${counts.replaced ? `, ${counts.replaced} replaced` : ''}. The library now holds ${counts.total} new cards.` })
+      onChanged()
+    }, failed)
+  }
+  const remove = () => {
+    setBusy(true)
+    removeNewCards().then((result) => {
+      setBusy(false)
+      setRemoving(false)
+      setNote({ tone: 'ok', text: `${result.removed} new card${result.removed === 1 ? '' : 's'} removed.` })
+      onChanged()
+    }, failed)
+  }
+  return (
+    <section className="panel new-cards">
+      <h2>New cards</h2>
+      <p>
+        Cards that are not on ATLAS, such as the ones drafted from published papers. They are listed in Browse with ATLAS's cards and always
+        carry <span className="new-badge"><span aria-hidden="true">✦</span> New</span>, with the paper they came from.{' '}
+        <strong>{count}</strong> {count === 1 ? 'is' : 'are'} in the library now.
+      </p>
+      <input ref={input} type="file" accept="application/json,.json" hidden onChange={picked} />
+      <div className="row">
+        <button type="button" disabled={busy} onClick={() => input.current?.click()}>{busy ? 'Working…' : 'Add cards from a file…'}</button>
+        {count > 0 && !removing && <button type="button" className="link" onClick={() => setRemoving(true)}>Remove all new cards</button>}
+        {removing && (
+          <>
+            <button type="button" disabled={busy} onClick={remove}>Yes, remove all {count}</button>
+            <button type="button" className="link" disabled={busy} onClick={() => setRemoving(false)}>Keep them</button>
+          </>
+        )}
+      </div>
+      {note && <p className={`banner ${note.tone}`} role="status">{note.text}</p>}
+      <p className="muted fine">The file is <code>new-cards.json</code>, made by <code>bundle.py</code> in the harvest folder.</p>
+    </section>
   )
 }
 

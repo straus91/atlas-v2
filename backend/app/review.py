@@ -1,18 +1,28 @@
 """Author review of cards.
 
 A card can carry the mark "Author-reviewed": its contact person was asked to check the card,
-said it is correct, and an administrator gave the final OK. This module keeps that state in one
-small file, makes the personal links, and writes and sends the emails.
+said it is correct or corrected it, and an administrator gave the final OK. This module keeps
+that state in one small file, makes the personal links, and writes and sends the emails.
 
 The steps of one review:
 
     requested   the contact was asked (an email was sent, or a link was made to send by hand)
-    confirmed   the contact said the card is correct          } answered on the page behind
-    changes     the contact said the card needs changes       } the personal link
-    approved    an administrator gave the final OK: everyone sees the mark
+    confirmed   the contact said the card is correct          }
+    edited      the contact sent a corrected card             } answered on the page behind
+    changes     the contact said the card needs changes,      } the personal link
+                without correcting it                         }
+    approved    an administrator gave the final OK: everyone sees the mark, and the contact's
+                corrected card, if there is one, is the card this site shows from then on
 
-The mark belongs to the card as it was when it was reviewed. If the card changes afterwards,
-the mark is no longer shown until the card is reviewed again.
+While the contact works on the card, their version so far is kept here as a draft, so they can
+close the page and come back with the same link.
+
+The mark belongs to the card as ATLAS had it when it was reviewed. If ATLAS's card changes
+afterwards, the mark and the contact's corrected card are no longer shown until the card is
+reviewed again.
+
+Every message this module writes, to a contact or to the administrator, is also kept in an
+outbox, sent or not, so the administrator can read exactly what went out (or would have).
 """
 from __future__ import annotations
 
@@ -29,7 +39,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 LINK_DAYS = 60                     # how long a personal link works
-STATUSES = ("requested", "confirmed", "changes", "approved")
+STATUSES = ("requested", "confirmed", "edited", "changes", "approved")
+OUTBOX_KEPT = 200                  # how many messages the outbox remembers
+MAX_CARD_BYTES = 600_000           # the largest corrected card a contact may send
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 _WORD_WITH_AT = re.compile(r"[^\s<>()\[\],;:\"']+@[^\s<>()\[\],;:\"']+")
 # How addresses usually end; used only to tell an address from one written backwards.
@@ -66,6 +78,54 @@ def now() -> datetime:
 def fingerprint(card: dict[str, Any]) -> str:
     """Changes whenever anything in the card changes."""
     return hashlib.sha256(json.dumps(card, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+# ------------------------------------------------------------------ what a contact changed
+def _plain(value: Any) -> Any:
+    """A card value without what carries no information: empty text, lists and groups."""
+    if isinstance(value, dict):
+        kept = {key: plain for key, item in value.items() if (plain := _plain(item)) is not None}
+        return kept or None
+    if isinstance(value, list):
+        items = [plain for item in value if (plain := _plain(item)) is not None]
+        return items or None
+    if isinstance(value, str):
+        return value.strip() or None
+    return value
+
+
+def _leaves(value: Any, path: tuple[str, ...] = ()):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield from _leaves(item, path + (str(key),))
+    elif isinstance(value, list) and any(isinstance(item, (dict, list)) for item in value):
+        for position, item in enumerate(value, start=1):
+            yield from _leaves(item, path + (str(position),))
+    else:
+        yield path, value
+
+
+def _words(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return ", ".join(_words(item) for item in value)
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return str(value)
+
+
+def differences(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, str]]:
+    """Every fact that differs between two versions of a card, as {"where", "before", "after"}.
+    Key order and empty fields do not count. Rows of a list are numbered from 1."""
+    old, new = dict(_leaves(_plain(before) or {})), dict(_leaves(_plain(after) or {}))
+    rows = []
+    for path in [*old, *(path for path in new if path not in old)]:
+        if path[:1] == ("$schema",) or old.get(path) == new.get(path):
+            continue
+        shown = path[1:] if path[0] in ("Dataset", "Model") and len(path) > 1 else path
+        rows.append({"where": " › ".join(shown), "before": _words(old.get(path))[:600], "after": _words(new.get(path))[:600]})
+    return rows
 
 
 def contacts_of(card: dict[str, Any]) -> list[dict[str, str]]:
@@ -162,6 +222,41 @@ def write_message(subject: str, body: str, *, name: str, card: str, card_type: s
     return subject, body
 
 
+def admin_notice(*, title: str, review: dict[str, Any], changed: list[dict[str, str]], site: str) -> tuple[str, str]:
+    """The note the administrator gets when a contact has answered: (subject, text)."""
+    who = review.get("answered_by") or review.get("name") or review.get("email") or "The contact"
+    status = review.get("status")
+    if status == "edited":
+        said = f"sent a corrected card ({len(changed)} change{'' if len(changed) == 1 else 's'})"
+    elif status == "confirmed":
+        said = "says the card is correct" + (" (quick button, without going through the sections)" if review.get("how") == "quick" else "")
+    else:
+        said = "says the card needs changes"
+    lines = [f'{who} {said}: "{title}".', ""]
+    if changed:
+        lines.append("What they changed:")
+        lines += [f'- {row["where"]}: {row["before"] or "(empty)"} -> {row["after"] or "(removed)"}' for row in changed[:40]]
+        if len(changed) > 40:
+            lines.append(f"- and {len(changed) - 40} more")
+        lines.append("")
+    if review.get("flagged"):
+        lines += ["Sections marked as not right: " + ", ".join(review["flagged"]) + ".", ""]
+    if review.get("comment"):
+        lines += ["Their comment:", review["comment"], ""]
+    lines.append("Nothing is published until you give the final OK:" if status in ("edited", "confirmed") else "Read it here:")
+    lines.append(f"{site.rstrip('/')}/#/admin")
+    return f'An author checked "{title}"', "\n".join(lines)
+
+
+def _names(values: list[Any]) -> list[str]:
+    return list(dict.fromkeys(str(value)[:80] for value in values if isinstance(value, str) and value.strip()))[:40]
+
+
+def _check_size(card: dict[str, Any]) -> None:
+    if len(json.dumps(card, ensure_ascii=False).encode("utf-8")) > MAX_CARD_BYTES:
+        raise ReviewError("That card is too large to keep.")
+
+
 # ------------------------------------------------------------------ the reviews
 class Reviews:
     """Every card's review, kept in one JSON file. Safe to use from several requests at once."""
@@ -169,11 +264,12 @@ class Reviews:
     def __init__(self, path: Path | None):
         self._path = path
         self._lock = threading.Lock()
-        self._data: dict[str, Any] = {"settings": {}, "reviews": {}}
+        self._data: dict[str, Any] = {"settings": {}, "reviews": {}, "outbox": []}
         if path is not None and path.exists():
             try:
                 saved = json.loads(path.read_text(encoding="utf-8"))
-                self._data = {"settings": dict(saved.get("settings") or {}), "reviews": dict(saved.get("reviews") or {})}
+                self._data = {"settings": dict(saved.get("settings") or {}), "reviews": dict(saved.get("reviews") or {}),
+                              "outbox": list(saved.get("outbox") or [])}
             except (OSError, ValueError):
                 pass  # an unreadable file is replaced at the next change; the cards themselves are untouched
 
@@ -191,13 +287,19 @@ class Reviews:
             saved = self._data["settings"]
             return {"emails_enabled": bool(saved.get("emails_enabled")),
                     "subject": saved.get("subject") or DEFAULT_SUBJECT, "body": saved.get("body") or DEFAULT_BODY,
-                    "standard_subject": DEFAULT_SUBJECT, "standard_body": DEFAULT_BODY}
+                    "standard_subject": DEFAULT_SUBJECT, "standard_body": DEFAULT_BODY,
+                    "admin_email": saved.get("admin_email") or ""}
 
-    def change_settings(self, emails_enabled: bool | None = None, subject: str | None = None, body: str | None = None) -> None:
+    def change_settings(self, emails_enabled: bool | None = None, subject: str | None = None, body: str | None = None,
+                        admin_email: str | None = None) -> None:
         if body is not None and body.strip() and "{link}" not in body:
             raise ReviewError("The message must contain {link}, the place where the personal link goes.")
+        if admin_email is not None and admin_email.strip() and not EMAIL.fullmatch(admin_email.strip()):
+            raise ReviewError(f'"{admin_email.strip()}" is not an email address.')
         with self._lock:
             saved = self._data["settings"]
+            if admin_email is not None:
+                saved["admin_email"] = admin_email.strip()
             if emails_enabled is not None:
                 saved["emails_enabled"] = bool(emails_enabled)
             if subject is not None:
@@ -216,12 +318,47 @@ class Reviews:
         with self._lock:
             return json.loads(json.dumps(self._data["reviews"]))
 
+    # ---- messages
+    def post(self, mail: Mail, *, to: str, subject: str, body: str, about: str, kind: str) -> tuple[bool, str]:
+        """Send a message if that is possible, and keep it in the outbox either way.
+        Returns (was it sent, why not). `kind`: "request" (to a contact) or "notice" (to the administrator)."""
+        sent, problem = False, ""
+        if not to:
+            problem = "no address is set for these notes"
+        elif not mail.configured:
+            problem = "no mail server is set up on this site"
+        else:
+            try:
+                send_email(mail, to, subject, body)
+                sent = True
+            except ReviewError as error:
+                problem = str(error)
+        with self._lock:
+            self._data["outbox"].append({"at": now().isoformat(timespec="seconds"), "to": to, "subject": subject, "body": body,
+                                         "about": about, "kind": kind, "sent": sent, "problem": problem})
+            del self._data["outbox"][:-OUTBOX_KEPT]
+            self._save()
+        return sent, problem
+
+    def outbox(self, limit: int = 50) -> list[dict[str, Any]]:
+        """The latest messages, newest first."""
+        with self._lock:
+            return json.loads(json.dumps(self._data["outbox"][-limit:][::-1]))
+
+    def revisions(self, fingerprint_of: Callable[[str], str | None]) -> dict[str, dict[str, Any]]:
+        """card id -> the contact's corrected card, for approved reviews of cards ATLAS has not changed since."""
+        with self._lock:
+            approved = {card_id: (review.get("fingerprint"), review["revision"]) for card_id, review in self._data["reviews"].items()
+                        if review.get("status") == "approved" and isinstance(review.get("revision"), dict)}
+        return {card_id: json.loads(json.dumps(card)) for card_id, (reviewed, card) in approved.items()
+                if reviewed and reviewed == fingerprint_of(card_id)}
+
     def marks(self, fingerprint_of: Callable[[str], str | None]) -> dict[str, str]:
-        """card id -> the day it became author-reviewed, for cards unchanged since their review."""
+        """card id -> when it became author-reviewed, for cards unchanged since their review."""
         with self._lock:
             approved = {card_id: (review.get("fingerprint"), review.get("approved_at", ""))
                         for card_id, review in self._data["reviews"].items() if review.get("status") == "approved"}
-        return {card_id: day[:10] for card_id, (reviewed, day) in approved.items() if reviewed and reviewed == fingerprint_of(card_id)}
+        return {card_id: when for card_id, (reviewed, when) in approved.items() if reviewed and reviewed == fingerprint_of(card_id)}
 
     def by_token(self, token: str) -> tuple[str, dict[str, Any]] | None:
         """The card a personal link is for. None when the link is unknown, replaced or too old."""
@@ -253,15 +390,7 @@ class Reviews:
         link = f"{site.rstrip('/')}/#/validate/{token}"
         subject, body = write_message(template["subject"], template["body"], name=name, card=title, card_type=card_type,
                                       link=link, until=f"{expires:%B} {expires.day}, {expires.year}")
-        sent, problem = False, ""
-        if mail.configured:
-            try:
-                send_email(mail, email, subject, body)
-                sent = True
-            except ReviewError as error:
-                problem = str(error)
-        else:
-            problem = "no mail server is set up on this site"
+        sent, problem = self.post(mail, to=email, subject=subject, body=body, about=title, kind="request")
         with self._lock:
             review = self._data["reviews"].setdefault(card_id, {})
             history = review.get("history", [])
@@ -273,35 +402,73 @@ class Reviews:
             self._save()
             return json.loads(json.dumps(review))
 
-    def answer(self, token: str, *, correct: bool, name: str, comment: str, card_fingerprint: str) -> dict[str, Any]:
-        """The contact's answer, given on the page behind the personal link."""
+    def save_draft(self, token: str, card: dict[str, Any], flagged: list[str]) -> dict[str, Any]:
+        """Keep the contact's version of the card so far. Nothing is answered yet."""
+        found = self.by_token(token)
+        if found is None:
+            raise ReviewError("This link is no longer valid.")
+        _check_size(card)
+        with self._lock:
+            review = self._data["reviews"][found[0]]
+            if review.get("status") == "approved":
+                raise ReviewError("This card has already been marked as author-reviewed.")
+            if "draft" not in review:
+                self._note(review, "the contact started working on the card")
+            review["draft"] = {"card": card, "flagged": _names(flagged), "saved_at": now().isoformat(timespec="seconds")}
+            self._save()
+            return json.loads(json.dumps(review))
+
+    def answer(self, token: str, *, correct: bool, name: str, comment: str, card_fingerprint: str, how: str = "",
+               card: dict[str, Any] | None = None, changes: int = 0, flagged: list[str] | None = None) -> dict[str, Any]:
+        """The contact's answer, given on the page behind the personal link.
+
+        `how`: "quick" (the one-click yes) or "sections" (went through the card section by section).
+        `card` with `changes` > 0: the contact's corrected card, which differs from ATLAS's in that many facts.
+        `flagged`: sections the contact marked as not right without correcting them."""
         found = self.by_token(token)
         if found is None:
             raise ReviewError("This link is no longer valid.")
         card_id, _ = found
         comment = comment.strip()[:4000]
-        if not correct and not comment:
-            raise ReviewError("Please say what needs to change.")
+        flagged = _names(flagged or [])
+        edited = card is not None and changes > 0
+        if edited:
+            _check_size(card)
+        if (not correct or flagged) and not comment:
+            raise ReviewError("Please say what is not right, so the card can be corrected.")
+        status = "edited" if edited else "confirmed" if correct and not flagged else "changes"
         with self._lock:
             review = self._data["reviews"][card_id]
             if review.get("status") == "approved":
                 raise ReviewError("This card has already been marked as author-reviewed.")
-            review.update(status="confirmed" if correct else "changes", answered_at=now().isoformat(timespec="seconds"),
-                          answered_by=name.strip()[:200], comment=comment, fingerprint=card_fingerprint)
-            self._note(review, "the contact said the card is correct" if correct else "the contact asked for changes")
+            review.update(status=status, answered_at=now().isoformat(timespec="seconds"), answered_by=name.strip()[:200],
+                          comment=comment, fingerprint=card_fingerprint, how="quick" if how == "quick" else "sections",
+                          flagged=flagged, changes=changes if edited else 0)
+            if edited:
+                review["revision"] = card
+                review["draft"] = {"card": card, "flagged": flagged, "saved_at": review["answered_at"]}
+            else:
+                review.pop("revision", None)
+            said = {"confirmed": "the contact said the card is correct", "changes": "the contact asked for changes",
+                    "edited": f"the contact sent a corrected card ({changes} change{'' if changes == 1 else 's'})"}[status]
+            self._note(review, said + (" with the quick button" if how == "quick" and status == "confirmed" else ""))
             self._save()
             return json.loads(json.dumps(review))
 
     def approve(self, card_id: str, current_fingerprint: str) -> dict[str, Any]:
-        """The administrator's final OK, possible once the contact has said the card is correct."""
+        """The administrator's final OK, possible once the contact has said the card is correct or
+        has sent a corrected card. With a corrected card, that card is what the site shows from now on."""
         with self._lock:
             review = self._data["reviews"].get(card_id)
-            if not review or review.get("status") != "confirmed":
+            if not review or review.get("status") not in ("confirmed", "edited"):
                 raise ReviewError("The contact has not confirmed this card yet.")
             if review.get("fingerprint") != current_fingerprint:
-                raise ReviewError("The card has changed since the contact confirmed it. Ask them again.")
+                raise ReviewError("The card has changed since the contact checked it. Ask them again.")
+            corrected = review["status"] == "edited"
             review.update(status="approved", approved_at=now().isoformat(timespec="seconds"))
-            self._note(review, "final OK given: marked as author-reviewed")
+            review.pop("draft", None)
+            self._note(review, "final OK given: the contact's corrected card is published and marked as author-reviewed" if corrected
+                       else "final OK given: marked as author-reviewed")
             self._save()
             return json.loads(json.dumps(review))
 

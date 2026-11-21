@@ -4,8 +4,8 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { CardToOpen } from './host.ts'
-import { ReviewedBadge, TypeBadge } from './Library.tsx'
-import { NOT_STATED, REVIEWED, day, getLibraryCard, libraryLink, saveCard, sizeParts } from './library.ts'
+import { NewBadge, ReviewedBadge, TypeBadge, reviewedNote } from './Library.tsx'
+import { NOT_STATED, REVIEWED, getLibraryCard, isNew, libraryLink, saveCard, sizeParts } from './library.ts'
 import type { LibraryCard, LibraryRecord, ReadResult } from './library.ts'
 import { parseResults } from './results.ts'
 
@@ -97,10 +97,21 @@ export function CardBody({ record, onEdit, onRemoveDraft, backTo, backLabel, bar
         </p>
       )}
 
+      {facts && isNew(facts) && !bare && (
+        <p className="banner new-note">
+          <strong><span aria-hidden="true">✦</span> New card, not on ATLAS yet.</strong> It was drafted from the published paper
+          {facts.paper?.title ? <> “{facts.paper.title}”</> : ''}
+          {facts.paper?.journal ? ` (${[facts.paper.journal, facts.paper.year].filter(Boolean).join(', ')})` : ''} by the card creator's AI reader.{' '}
+          {facts.author_reviewed ? 'Its author has since reviewed it.' : 'Nobody has checked it against the paper yet.'}
+          {facts.paper?.doi && <> <a href={`https://doi.org/${facts.paper.doi}`} target="_blank" rel="noreferrer">Open the paper ↗</a></>}
+        </p>
+      )}
+
       <section className="panel card-top">
         <div className="card-title">
           <span className="row badges">
             <TypeBadge type={cardType} />
+            {facts && <NewBadge card={facts} />}
             {facts && <ReviewedBadge card={facts} />}
           </span>
           <h2>{title}</h2>
@@ -111,7 +122,7 @@ export function CardBody({ record, onEdit, onRemoveDraft, backTo, backLabel, bar
           {link && <a className="button primary" href={link} target="_blank" rel="noreferrer">Open the {cardType === 'dataset' ? 'dataset' : 'publication'} ↗</a>}
           {!bare && <button type="button" onClick={download}>Download card (JSON)</button>}
           {onEdit && !bare && <button type="button" onClick={() => onEdit({ cardType, title, card: record.card })}>Open in the card creator</button>}
-          {facts && !facts.draft && <a className="button" href={facts.atlas_url} target="_blank" rel="noreferrer">View on ATLAS ↗</a>}
+          {facts && !facts.draft && facts.atlas_url && <a className="button" href={facts.atlas_url} target="_blank" rel="noreferrer">View on ATLAS ↗</a>}
         </div>
       </section>
 
@@ -145,7 +156,7 @@ function Glance({ facts }: { facts: LibraryCard }) {
   rows.push(['Population', facts.ages ? `${facts.population} (${age(facts.ages[0])} to ${age(facts.ages[1])})` : facts.population])
   rows.push(['Published', facts.year ? String(facts.year) : NOT_STATED])
   rows.push(['License', facts.license || NOT_STATED])
-  if (facts.author_reviewed) rows.push([REVIEWED, `The contact person of this card confirmed that it is correct (${day(facts.author_reviewed)}).`])
+  if (facts.author_reviewed) rows.push([REVIEWED, reviewedNote(facts)])
   if (facts.organizations.length) rows.push(['From', facts.organizations.slice(0, 3).join('; ') + (facts.organizations.length > 3 ? ` +${facts.organizations.length - 3}` : '')])
   return (
     <dl className="glance">
