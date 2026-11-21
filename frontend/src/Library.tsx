@@ -39,10 +39,8 @@ export function reviewedNote(card: Pick<LibraryCard, 'author_reviewed' | 'author
 }
 
 /** The gold star of a card whose contact person confirmed or corrected it. Shows nothing for other cards. */
-export function ReviewedBadge({ card, compact = false }: { card: Pick<LibraryCard, 'author_reviewed' | 'author_edited'>; compact?: boolean }) {
+export function ReviewedBadge({ card }: { card: Pick<LibraryCard, 'author_reviewed' | 'author_edited'> }) {
   if (!card.author_reviewed) return null
-  // In lists only the star, like the other small icons of a row; pointing at it says what it means.
-  if (compact) return <span className="reviewed-star" role="img" aria-label="Author-reviewed" title={`Author-reviewed. ${reviewedNote(card)}`}>★</span>
   return (
     <span className="reviewed-badge" title={reviewedNote(card)}>
       <span className="star" aria-hidden="true">★</span> Author-reviewed
@@ -339,7 +337,7 @@ function ListTable({ cards, mode, metric }: { cards: LibraryCard[]; mode: 'mixed
                 <a href={`#/library/${card.id}`}>{card.title}</a>
                 {card.draft && <span className="draft-badge" title="You sent this card from the creator. Only you can see it, in this browser.">Draft</span>}
                 <NewBadge card={card} />
-                <ReviewedBadge card={card} compact />
+                <ReviewedBadge card={card} />
                 {card.summary && <span className="muted line">{card.summary}</span>}
               </td>
               {mode === 'mixed' && <td><TypeBadge type={card.type} /></td>}
@@ -441,7 +439,7 @@ function Tile({ card }: { card: LibraryCard }) {
           <TypeBadge type={card.type} />
           {card.draft && <span className="draft-badge" title="You sent this card from the creator. Only you can see it, in this browser.">Draft</span>}
           <NewBadge card={card} />
-          <ReviewedBadge card={card} compact />
+          <ReviewedBadge card={card} />
         </span>
         <strong>{card.title}</strong>
       </span>
